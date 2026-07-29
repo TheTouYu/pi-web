@@ -197,6 +197,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
   const {
     loading, error, messages, entryIds, streamState,
+    livePresence, sharedControl, enableSharedControl, disableSharedControl,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
@@ -331,6 +332,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     : null;
 
   const chatInputElement = (
+    <div className={livePresence && !sharedControl ? "pointer-events-none opacity-60" : undefined} aria-disabled={!!livePresence && !sharedControl}>
     <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
@@ -370,6 +372,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
     />
+    </div>
   );
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
@@ -399,6 +402,18 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {livePresence && (
+        <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-4 py-2 text-sm">
+          <span>{livePresence.connected ? "正在观察终端 Pi" : "终端 Pi 正在重连"}</span>
+          <button
+            type="button"
+            className="rounded border border-[var(--border)] px-3 py-1 hover:bg-[var(--bg-hover)]"
+            onClick={() => void (sharedControl ? disableSharedControl() : enableSharedControl())}
+          >
+            {sharedControl ? "关闭 Shared Control" : "启用 Shared Control"}
+          </button>
+        </div>
+      )}
       {isDragOver && !sessionBusy && (
         <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

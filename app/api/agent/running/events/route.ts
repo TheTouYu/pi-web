@@ -1,4 +1,5 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
+import { getObservedPresence, subscribeHub } from "@/lib/live/hub-client";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +8,9 @@ export const dynamic = "force-dynamic";
 // so the sidebar never has to poll.
 export async function GET(req: Request) {
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
+      let observedRunning = new Set((await getObservedPresence()).filter((p) => p.busy).map((p) => p.sessionId));
+      const combined = () => [...new Set([...getRunningRpcSessionIds(), ...observedRunning])];
       const encode = (data: unknown) => {
         const text = `data: ${JSON.stringify(data)}\n\n`;
         controller.enqueue(new TextEncoder().encode(text));
@@ -17,7 +20,7 @@ export async function GET(req: Request) {
       // through the gap between snapshot and subscription.
       const unsubscribe = subscribeRunningSessions((ids) => {
         try {
-          encode({ type: "running", runningSessionIds: ids });
+          encode({ type: "running", runningSessionIds: [...new Set([...ids, ...observedRunning])] });
         } catch {
           // controller already closed
         }
@@ -25,7 +28,13 @@ export async function GET(req: Request) {
 
       // Initial snapshot so the client renders the correct state immediately.
       // (A duplicate frame here is harmless: the client just sets the same set.)
-      encode({ type: "running", runningSessionIds: getRunningRpcSessionIds() });
+      encode({ type: "running", runningSessionIds: combined() });
+
+      const unsubscribeHub = subscribeHub((message) => {
+        if (message.type !== "presence" || !Array.isArray(message.sessions)) return;
+        observedRunning = new Set((message.sessions as Array<{ sessionId: string; busy: boolean }>).filter((p) => p.busy).map((p) => p.sessionId));
+        try { encode({ type: "running", runningSessionIds: combined() }); } catch {}
+      });
 
       // Heartbeat to keep the connection alive through proxies/timeouts.
       const heartbeat = setInterval(() => {
@@ -39,6 +48,7 @@ export async function GET(req: Request) {
       const cleanup = () => {
         clearInterval(heartbeat);
         unsubscribe();
+        unsubscribeHub();
         try { controller.close(); } catch { /* already closed */ }
       };
 

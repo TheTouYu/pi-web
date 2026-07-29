@@ -10,7 +10,7 @@ import type {
   SessionTreeNode,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { sendAgentCommand } from "@/lib/agent-client";
+import { acquireSharedControl, releaseSharedControl, sendAgentCommand } from "@/lib/agent-client";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
@@ -367,6 +367,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  const [livePresence, setLivePresence] = useState<{ instanceId: string; connected: boolean; capabilities: string[] } | null>(null);
+  const [sharedControl, setSharedControl] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -387,6 +389,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  const observedRef = useRef<{ generation: number; runId: number; baseLeafId: string | null } | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -467,7 +470,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       try {
         const stateRes = await fetch(`/api/sessions/${encodeURIComponent(sid)}/state`);
         if (!stateRes.ok) throw new Error(`HTTP ${stateRes.status}`);
-        const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse };
+        const agentState = await stateRes.json() as { running: boolean; runtime?: "observed" | "web"; state?: AgentStateResponse };
         if (sessionIdRef.current !== sid) return null;
 
         const liveState = agentState.state;
@@ -881,6 +884,40 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
+      case "live_snapshot": {
+        const snapshot = event.snapshot as { generation?: number; runId?: number; baseLeafId?: string | null; leafId?: string | null; busy?: boolean; messages?: AgentMessage[] } | undefined;
+        if (!snapshot || typeof snapshot.generation !== "number" || typeof snapshot.runId !== "number") break;
+        const liveBranch = snapshot.baseLeafId ?? snapshot.leafId ?? null;
+        observedRef.current = { generation: snapshot.generation, runId: snapshot.runId, baseLeafId: liveBranch };
+        const presence = event.presence as { instanceId?: string; connected?: boolean; capabilities?: string[] } | undefined;
+        setLivePresence({ instanceId: presence?.instanceId ?? "", connected: presence?.connected ?? true, capabilities: presence?.capabilities ?? [] });
+        if (activeLeafId === liveBranch || activeLeafId === snapshot.leafId) {
+          const overlay = snapshot.messages ?? [];
+          const complete = overlay.slice(0, -1).map(normalizeToolCalls);
+          const partial = overlay.at(-1);
+          if (complete.length) setMessages((prev) => [...prev, ...complete]);
+          if (partial) dispatch({ type: "update", message: normalizeToolCalls(partial) });
+          else if (!snapshot.busy) dispatch({ type: "reset" });
+          agentRunningRef.current = !!snapshot.busy;
+          setAgentRunning(!!snapshot.busy);
+        }
+        break;
+      }
+      case "live_interrupted":
+        addNotice({ type: "warning", message: "Terminal Pi disconnected; waiting for it to reconnect." });
+        break;
+      case "session_invalidation":
+        if (sessionIdRef.current) void loadSession(sessionIdRef.current);
+        break;
+      case "live_claim_released":
+        observedRef.current = null;
+        setLivePresence(null);
+        setSharedControl(false);
+        void finishPromptWithoutStream(sessionIdRef.current);
+        break;
+      case "agent_settled":
+        if (sessionIdRef.current) void finishPromptWithoutStream(sessionIdRef.current);
+        break;
       case "agent_start":
         agentRunningRef.current = true;
         setAgentRunning(true);
@@ -1026,8 +1063,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd]);
+  }, [activeLeafId, addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  const enableSharedControl = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try { await acquireSharedControl(sid); setSharedControl(true); }
+    catch (error) { addNotice({ type: "error", message: error instanceof Error ? error.message : String(error) }); }
+  }, [addNotice]);
+  const disableSharedControl = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    setSharedControl(false);
+    if (sid) await releaseSharedControl(sid);
+  }, []);
+  useEffect(() => () => { const sid = sessionIdRef.current; if (sid) void releaseSharedControl(sid); }, []);
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     const trimmedMessage = message.trim();
@@ -1499,6 +1549,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (session) {
       sessionIdRef.current = session.id;
       loadSession(session.id, true, true).then((agentState) => {
+        if (agentState?.runtime === "observed") {
+          // Observed terminal runs can start after this page loads, so keep a
+          // live subscription even while the terminal is currently idle.
+          void connectEvents(session.id);
+        }
         if (agentState?.running) {
           loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
@@ -1506,7 +1561,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            void connectEvents(session.id);
+            if (agentState.runtime !== "observed") void connectEvents(session.id);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
@@ -1628,6 +1683,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState,
+    livePresence, sharedControl, enableSharedControl, disableSharedControl,
     agentRunning, modelNames, modelList, modelError, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,

@@ -305,7 +305,8 @@ export class AgentSessionWrapper {
   }
 
   onDestroy(cb: () => void): void {
-    this.onDestroyCallback = cb;
+    const previous = this.onDestroyCallback;
+    this.onDestroyCallback = previous ? () => { previous(); cb(); } : cb;
   }
 
   async send(command: Record<string, unknown>): Promise<unknown> {

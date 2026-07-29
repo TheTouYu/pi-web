@@ -12,6 +12,14 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { getObservedSession } from "@/lib/live/hub-client";
+
+async function rejectObservedWrite(id: string): Promise<NextResponse | null> {
+  const observed = await getObservedSession(id);
+  return observed
+    ? NextResponse.json({ error: "Session is claimed by an observed Pi runtime", code: "observed_runtime_claim" }, { status: 409 })
+    : null;
+}
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -177,6 +185,8 @@ export async function PATCH(
 ) {
   const { id } = await params;
   try {
+    const blocked = await rejectObservedWrite(id);
+    if (blocked) return blocked;
     const { name } = await req.json() as { name?: string };
     if (typeof name !== "string") {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -201,6 +211,8 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
+    const blocked = await rejectObservedWrite(id);
+    if (blocked) return blocked;
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });

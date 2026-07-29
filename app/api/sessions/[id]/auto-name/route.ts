@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { generateSessionTitle } from "@/lib/session-title";
-import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession } from "@/lib/rpc-manager";
+import { getObservedSession } from "@/lib/live/hub-client";
+import { guardedStartRpcSession } from "@/lib/live/runtime-router";
 import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
 
 export async function POST(
@@ -16,11 +18,14 @@ export async function POST(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
+    if (await getObservedSession(id)) {
+      return NextResponse.json({ error: "Auto-name is unavailable while a terminal Pi claims this Session Record", code: "observed_runtime_claim" }, { status: 409 });
+    }
     const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
     const existing = getRpcSession(id);
     const { session } = existing?.isAlive()
       ? { session: existing }
-      : await startRpcSession(id, filePath, cwd);
+      : await guardedStartRpcSession(id, filePath, cwd);
 
     // globalThis keeps wrappers alive across dev hot reloads; older instances
     // may predate waitUntilReady(), but those have already completed startup.
