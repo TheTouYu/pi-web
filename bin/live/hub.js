@@ -15,6 +15,7 @@ const subscribers = new Set();
 const pendingCommands = new Map();
 const controls = new Map();
 const explicitContinuationRequired = new Set();
+let lastPresenceSnapshot = "";
 let lockFd;
 let server;
 
@@ -39,7 +40,13 @@ function publish(message) {
     } else sub.write(frame);
   }
 }
-function publishPresence() { publish({ type: "presence", sessions: presence() }); }
+function publishPresence() {
+  const sessions = presence();
+  const snapshot = JSON.stringify(sessions);
+  if (snapshot === lastPresenceSnapshot) return;
+  lastPresenceSnapshot = snapshot;
+  publish({ type: "presence", sessions });
+}
 function releaseClaim(claim, requireExplicit = false) {
   if (claim.reservationTimer) clearTimeout(claim.reservationTimer);
   if (requireExplicit) explicitContinuationRequired.add(claim.sessionId);

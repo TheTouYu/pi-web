@@ -10,30 +10,33 @@ export async function GET(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       let observedRunning = new Set((await getObservedPresence()).filter((p) => p.busy).map((p) => p.sessionId));
-      const combined = () => [...new Set([...getRunningRpcSessionIds(), ...observedRunning])];
-      const encode = (data: unknown) => {
-        const text = `data: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(new TextEncoder().encode(text));
+      const combined = (rpcIds = getRunningRpcSessionIds()) => [...new Set([...rpcIds, ...observedRunning])];
+      let lastRunningSnapshot = "";
+      const encodeRunning = (ids: string[]) => {
+        const runningSessionIds = [...new Set(ids)].sort();
+        const snapshot = JSON.stringify(runningSessionIds);
+        if (snapshot === lastRunningSnapshot) return;
+        lastRunningSnapshot = snapshot;
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "running", runningSessionIds })}\n\n`));
       };
 
       // Subscribe BEFORE taking the initial snapshot so no state change can slip
       // through the gap between snapshot and subscription.
       const unsubscribe = subscribeRunningSessions((ids) => {
         try {
-          encode({ type: "running", runningSessionIds: [...new Set([...ids, ...observedRunning])] });
+          encodeRunning(combined(ids));
         } catch {
           // controller already closed
         }
       });
 
       // Initial snapshot so the client renders the correct state immediately.
-      // (A duplicate frame here is harmless: the client just sets the same set.)
-      encode({ type: "running", runningSessionIds: combined() });
+      encodeRunning(combined());
 
       const unsubscribeHub = subscribeHub((message) => {
         if (message.type !== "presence" || !Array.isArray(message.sessions)) return;
         observedRunning = new Set((message.sessions as Array<{ sessionId: string; busy: boolean }>).filter((p) => p.busy).map((p) => p.sessionId));
-        try { encode({ type: "running", runningSessionIds: combined() }); } catch {}
+        try { encodeRunning(combined()); } catch {}
       });
 
       // Heartbeat to keep the connection alive through proxies/timeouts.

@@ -1,5 +1,10 @@
 # Pi Web - Development Notes
 
+## Communication
+
+- 默认使用中文与用户沟通。
+- 使用通俗易懂、适合新手的语言；尽量少用术语，必须使用时顺带解释。
+
 ## Quick Start
 
 ```bash

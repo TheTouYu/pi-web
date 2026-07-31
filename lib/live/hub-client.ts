@@ -64,6 +64,10 @@ export function subscribeHub(onMessage: (message: Record<string, unknown>) => vo
   const socket = net.createConnection(socketPath()); const requestId = randomUUID();
   const decode = decoder((frame) => {
     if (frame.type === "push" && frame.message && typeof frame.message === "object") onMessage(frame.message as Record<string, unknown>);
+    else if (frame.type === "response" && frame.requestId === requestId && frame.data && typeof frame.data === "object") {
+      const sessions = (frame.data as { sessions?: unknown }).sessions;
+      if (Array.isArray(sessions)) onMessage({ type: "presence", sessions });
+    }
   });
   socket.once("connect", () => socket.write(encode({ type: "subscribe", requestId })));
   socket.on("data", (chunk) => { try { decode(typeof chunk === "string" ? Buffer.from(chunk) : chunk); } catch { socket.destroy(); } });

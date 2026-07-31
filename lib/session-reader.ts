@@ -4,8 +4,10 @@ import {
   buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, openSync, readSync } from "fs";
-import { normalize as normalizePath } from "path";
+import { closeSync, createReadStream, openSync, readSync } from "fs";
+import { readdir, stat } from "fs/promises";
+import { join, normalize as normalizePath } from "path";
+import { createInterface } from "readline";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
@@ -14,8 +16,105 @@ import { resolveProject, type ProjectInfo } from "./worktree";
 
 export { getAgentDir };
 
-async function loadAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: PiSessionInfo[] = await SessionManager.listAll();
+type CachedSessionInfo = Omit<PiSessionInfo, "allMessagesText">;
+type SessionFileCacheEntry = { mtimeMs: number; size: number; info: CachedSessionInfo | null };
+
+function messageText(message: unknown): string {
+  if (!message || typeof message !== "object" || !("content" in message)) return "";
+  const content = (message as { content: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && (block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string")
+    .map((block) => block.text)
+    .join(" ");
+}
+
+async function readSessionInfo(filePath: string, modifiedFallback: Date): Promise<CachedSessionInfo | null> {
+  let header: SessionHeader | undefined;
+  let name: string | undefined;
+  let messageCount = 0;
+  let firstMessage = "";
+  let lastActivityTime: number | undefined;
+  const lines = createInterface({ input: createReadStream(filePath, { encoding: "utf8" }), crlfDelay: Infinity });
+
+  try {
+    for await (const line of lines) {
+      let entry: Record<string, unknown>;
+      try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+      if (!header) {
+        if (entry.type !== "session" || typeof entry.id !== "string") return null;
+        header = entry as unknown as SessionHeader;
+        continue;
+      }
+      if (entry.type === "session_info") name = typeof entry.name === "string" ? entry.name.trim() || undefined : undefined;
+      if (entry.type !== "message") continue;
+      messageCount++;
+      const message = entry.message;
+      if (!message || typeof message !== "object") continue;
+      const role = (message as { role?: unknown }).role;
+      if (role !== "user" && role !== "assistant") continue;
+      const messageTimestamp = (message as { timestamp?: unknown }).timestamp;
+      const activityTime = typeof messageTimestamp === "number" ? messageTimestamp : Date.parse(String(entry.timestamp ?? ""));
+      if (!Number.isNaN(activityTime)) lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+      if (!firstMessage && role === "user") firstMessage = messageText(message).slice(0, 50);
+    }
+  } catch {
+    return null;
+  }
+
+  if (!header) return null;
+  return {
+    path: filePath,
+    id: header.id,
+    cwd: typeof header.cwd === "string" ? header.cwd : "",
+    name,
+    parentSessionPath: header.parentSession,
+    created: new Date(header.timestamp),
+    modified: lastActivityTime ? new Date(lastActivityTime) : Number.isNaN(Date.parse(header.timestamp)) ? modifiedFallback : new Date(header.timestamp),
+    messageCount,
+    firstMessage: firstMessage || "(no messages)",
+  };
+}
+
+async function listSessionFiles(): Promise<string[]> {
+  const root = join(getAgentDir(), "sessions");
+  try {
+    const dirs = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory());
+    return (await Promise.all(dirs.map(async (dir) => {
+      const dirPath = join(root, dir.name);
+      try { return (await readdir(dirPath)).filter((name) => name.endsWith(".jsonl")).map((name) => join(dirPath, name)); }
+      catch { return []; }
+    }))).flat();
+  } catch {
+    return [];
+  }
+}
+
+async function listPiSessionsIncrementally(generation: number): Promise<CachedSessionInfo[]> {
+  const files = await listSessionFiles();
+  const previous = globalThis.__piSessionInfoCache ?? new Map<string, SessionFileCacheEntry>();
+  const next = new Map<string, SessionFileCacheEntry>();
+
+  for (let i = 0; i < files.length; i += 10) {
+    await Promise.all(files.slice(i, i + 10).map(async (filePath) => {
+      try {
+        const stats = await stat(filePath);
+        const cached = previous.get(filePath);
+        const entry = cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size
+          ? cached
+          : { mtimeMs: stats.mtimeMs, size: stats.size, info: await readSessionInfo(filePath, stats.mtime) };
+        next.set(filePath, entry);
+      } catch { /* file disappeared during discovery */ }
+    }));
+  }
+
+  if ((globalThis.__piSessionListGeneration ?? 0) === generation) globalThis.__piSessionInfoCache = next;
+  return [...next.values()].flatMap((entry) => entry.info ? [entry.info] : []).sort((a, b) => b.modified.getTime() - a.modified.getTime());
+}
+
+async function loadAllSessions(generation: number): Promise<SessionInfo[]> {
+  const piSessions = await listPiSessionsIncrementally(generation);
   const pathToId = new Map<string, string>();
   for (const s of piSessions) pathToId.set(sessionPathKey(s.path), s.id);
 
@@ -61,7 +160,7 @@ export async function listAllSessions(): Promise<SessionInfo[]> {
     return globalThis.__piSessionListPromise;
   }
 
-  const loadPromise = loadAllSessions().then((data) => {
+  const loadPromise = loadAllSessions(generation).then((data) => {
     // An invalidation may happen while the scan is in flight. Do not let that
     // older result repopulate the cache after a session mutation.
     if ((globalThis.__piSessionListGeneration ?? 0) === generation) {
@@ -87,6 +186,7 @@ export async function listAllSessions(): Promise<SessionInfo[]> {
 declare global {
   var __piSessionPathCache: Map<string, string> | undefined;
   var __piPathToSessionIdCache: Map<string, string> | undefined;
+  var __piSessionInfoCache: Map<string, SessionFileCacheEntry> | undefined;
   var __piSessionListPromise: Promise<SessionInfo[]> | undefined;
   var __piSessionListPromiseGeneration: number | undefined;
   var __piSessionListGeneration: number | undefined;
