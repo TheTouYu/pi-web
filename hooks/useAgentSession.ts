@@ -156,6 +156,8 @@ export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" 
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
 const USER_SCROLL_INTENT_MS = 1200;
+const AUTO_SCROLL_RESUME_MS = 3000;
+const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -383,6 +385,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
+  const autoScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamScrollFrameRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
@@ -1113,6 +1117,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
     completionScrollAllowedRef.current = true;
+    if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
 
@@ -1539,10 +1544,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleScrollPositionChange = useCallback(() => {
     if (!agentRunningRef.current) return;
-    if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
-    if (Date.now() > userScrollIntentUntilRef.current) return;
+    const now = Date.now();
+    if (now < ignoreProgrammaticScrollUntilRef.current && now > userScrollIntentUntilRef.current) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.clientHeight - container.scrollTop;
+    if (distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX) {
+      completionScrollAllowedRef.current = true;
+      if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
+      autoScrollResumeTimerRef.current = null;
+      return;
+    }
+    if (now > userScrollIntentUntilRef.current) return;
+
     completionScrollAllowedRef.current = false;
-  }, []);
+    if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
+    autoScrollResumeTimerRef.current = setTimeout(() => {
+      autoScrollResumeTimerRef.current = null;
+      if (!agentRunningRef.current) return;
+      completionScrollAllowedRef.current = true;
+      scrollToBottom("smooth");
+    }, AUTO_SCROLL_RESUME_MS);
+  }, [scrollToBottom]);
 
   // Load session on mount
   useEffect(() => {
@@ -1587,6 +1611,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       bashRecoveryIdRef.current += 1;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
+      if (streamScrollFrameRef.current !== null) cancelAnimationFrame(streamScrollFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1636,6 +1662,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+
+  useEffect(() => {
+    if (!agentRunning || !streamState.streamingMessage || !completionScrollAllowedRef.current) return;
+    if (streamScrollFrameRef.current !== null) cancelAnimationFrame(streamScrollFrameRef.current);
+    streamScrollFrameRef.current = requestAnimationFrame(() => {
+      streamScrollFrameRef.current = null;
+      scrollToBottom("auto");
+    });
+    return () => {
+      if (streamScrollFrameRef.current !== null) cancelAnimationFrame(streamScrollFrameRef.current);
+      streamScrollFrameRef.current = null;
+    };
+  }, [agentRunning, streamState.streamingMessage, scrollToBottom]);
 
   // Load model list
   useEffect(() => {

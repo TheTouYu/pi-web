@@ -109,6 +109,8 @@ interface WorktreeState {
 }
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
+const AWAITING_REPLY_WINDOW_MS = 30 * 60 * 1000;
+const SESSION_REFRESH_INTERVAL_MS = 30 * 1000;
 
 function loadUnreadSessionIds(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -469,6 +471,11 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
+
+  useEffect(() => {
+    const timer = setInterval(() => { void loadSessions(); }, SESSION_REFRESH_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [loadSessions]);
 
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
@@ -848,6 +855,14 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
            title: t("sidebar.checkingWorktrees"),
         }
       : null);
+
+  const awaitingReplySessions = useMemo(() => {
+    const cutoff = Date.now() - AWAITING_REPLY_WINDOW_MS;
+    return allSessions
+      .filter((s) => s.id !== selectedSessionId && !runningSessionIds.has(s.id) && s.awaitingReplyAt)
+      .filter((s) => Date.parse(s.awaitingReplyAt!) >= cutoff)
+      .sort((a, b) => Date.parse(b.awaitingReplyAt!) - Date.parse(a.awaitingReplyAt!));
+  }, [allSessions, runningSessionIds, selectedSessionId]);
 
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(filteredSessions);
@@ -1505,6 +1520,33 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
 
       {/* Session list */}
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      {awaitingReplySessions.length > 0 && (
+        <div role="status" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 6, marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px 4px", color: "var(--text-muted)", fontSize: 11, fontWeight: 600, textTransform: "uppercase" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#0891b2", flexShrink: 0 }} />
+            <span>{t("sidebar.awaitingReplyCount", { count: awaitingReplySessions.length })}</span>
+          </div>
+          {awaitingReplySessions.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => handleSelectSessionFromList(s)}
+              title={t("sidebar.awaitingReplyTitle")}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", border: 0, background: "transparent", color: "var(--text)", textAlign: "left", cursor: "pointer" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <UnreadSessionIndicator />
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>{projectNameOf(s.projectRoot ?? s.cwd)}</span>
+                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 11 }}>{s.name || s.firstMessage}</span>
+              </span>
+              <span style={{ flexShrink: 0, color: "var(--text-muted)", fontSize: 10 }}>{formatRelativeTime(s.awaitingReplyAt!)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Other-project running sessions (switcher merged into the tree) */}
       {otherProjectRunning.length > 0 && !otherProjectDismissed && (
         <div role="status" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 6, marginBottom: 6 }}>

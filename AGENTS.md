@@ -154,6 +154,11 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 - `useAgentSession` still treats per-session SSE as primary for chat events, but while a run is active it periodically calls `GET /api/agent/[id]` and also reconciles on `visibilitychange`/`online`. This fixes missed `agent_end` events from background tabs or half-open connections.
 - Prompt runs use a monotonic run id; late SSE or slow reconciliation responses from an old run must be ignored so they cannot resurrect stale streaming bubbles.
 
+### Chat auto-follow and awaiting-reply sessions
+- While an agent is running, `useAgentSession` follows streaming output with `requestAnimationFrame`. A wheel/touch/scroll-key action away from the bottom pauses following; reaching within 48px of the bottom or waiting 3 seconds resumes it. Keep programmatic-scroll suppression separate from genuine user intent.
+- Do not add viewport-height padding after the live message list. `messagesEndRef.scrollIntoView()` already provides the bottom anchor; a one-screen spacer makes the final answer appear at the top with a blank viewport beneath it, especially when `agentRunning` changes to false.
+- `session-reader.ts` sets `awaitingReplyAt` only when the latest timestamped user-facing message is from the assistant. `SessionSidebar` shows non-running, non-selected sessions from the last 30 minutes in the cross-project awaiting-reply list; selecting one uses the normal session-selection path.
+
 ### Worktrees and project grouping
 - `lib/worktree.ts` resolves linked worktree top-levels back to the main repo `projectRoot`; `listAllSessions()` attaches that to each `SessionInfo` so all worktrees for one repo are grouped together in the sidebar.
 - Worktree operations are served by `/api/worktrees` and guarded by the same allowed-root rules as `/api/files`.

@@ -298,6 +298,8 @@ export interface SessionInfo {
   projectRoot?: string;
   /** Branch name when cwd is a linked git worktree (not the main checkout) */
   worktreeBranch?: string;
+  /** Timestamp of the latest assistant message when it is the latest user-facing turn. */
+  awaitingReplyAt?: string;
 }
 
 export interface SessionContext {

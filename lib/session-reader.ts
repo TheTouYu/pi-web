@@ -16,7 +16,7 @@ import { resolveProject, type ProjectInfo } from "./worktree";
 
 export { getAgentDir };
 
-type CachedSessionInfo = Omit<PiSessionInfo, "allMessagesText">;
+type CachedSessionInfo = Omit<PiSessionInfo, "allMessagesText"> & Pick<SessionInfo, "awaitingReplyAt">;
 type SessionFileCacheEntry = { mtimeMs: number; size: number; info: CachedSessionInfo | null };
 
 function messageText(message: unknown): string {
@@ -36,6 +36,9 @@ async function readSessionInfo(filePath: string, modifiedFallback: Date): Promis
   let messageCount = 0;
   let firstMessage = "";
   let lastActivityTime: number | undefined;
+  let latestUserMessageTime: number | undefined;
+  let latestAssistantMessageTime: number | undefined;
+  let latestMessageRole: "user" | "assistant" | undefined;
   const lines = createInterface({ input: createReadStream(filePath, { encoding: "utf8" }), crlfDelay: Infinity });
 
   try {
@@ -56,7 +59,12 @@ async function readSessionInfo(filePath: string, modifiedFallback: Date): Promis
       if (role !== "user" && role !== "assistant") continue;
       const messageTimestamp = (message as { timestamp?: unknown }).timestamp;
       const activityTime = typeof messageTimestamp === "number" ? messageTimestamp : Date.parse(String(entry.timestamp ?? ""));
-      if (!Number.isNaN(activityTime)) lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+      if (!Number.isNaN(activityTime)) {
+        lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+        if (role === "user") latestUserMessageTime = activityTime;
+        if (role === "assistant") latestAssistantMessageTime = activityTime;
+        latestMessageRole = role;
+      }
       if (!firstMessage && role === "user") firstMessage = messageText(message).slice(0, 50);
     }
   } catch {
@@ -74,6 +82,11 @@ async function readSessionInfo(filePath: string, modifiedFallback: Date): Promis
     modified: lastActivityTime ? new Date(lastActivityTime) : Number.isNaN(Date.parse(header.timestamp)) ? modifiedFallback : new Date(header.timestamp),
     messageCount,
     firstMessage: firstMessage || "(no messages)",
+    ...(latestMessageRole === "assistant"
+      && latestAssistantMessageTime !== undefined
+      && latestAssistantMessageTime > (latestUserMessageTime ?? -1)
+      ? { awaitingReplyAt: new Date(latestAssistantMessageTime).toISOString() }
+      : {}),
   };
 }
 
@@ -138,6 +151,7 @@ async function loadAllSessions(generation: number): Promise<SessionInfo[]> {
       modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || "(no messages)",
+      ...(s.awaitingReplyAt ? { awaitingReplyAt: s.awaitingReplyAt } : {}),
       parentSessionId: s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined,
       projectRoot: project?.projectRoot ?? s.cwd,
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
