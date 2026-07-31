@@ -162,10 +162,10 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 - Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
 
 ### Other-project running quick-switch box (`components/SessionSidebar.tsx`)
-- A floating box lists running sessions whose project root differs from the current one; clicking reuses `handleSelectSessionFromList` (same path as sidebar tree clicks: `setSelectedCwd` + `onSelectSession`).
-- The box must render via `createPortal(document.body)` — on mobile the sidebar container gets `transform: translateX(-100%)` when closed, which drags non-portaled fixed children off-screen.
+- A box inside the sidebar (top of the session list, under the project/worktree picker) lists running sessions whose project root differs from the current one; clicking reuses `handleSelectSessionFromList` (same path as sidebar tree clicks: `setSelectedCwd` + `onSelectSession`).
+- It renders inline in the sidebar container (no portal) — when the mobile drawer is closed the box hides with it, which is the desired behavior. A former `createPortal(document.body)` + `position: fixed` version was replaced for this reason.
 - Session project root comes from the `allSessions` entry (`projectRoot ?? cwd`); sessions with no known cwd are skipped. Dismiss (✕) only resets when a genuinely new session id appears (`seenOtherIdsRef`).
-- KNOWN ISSUE (next iteration): clicking switches the project but the target conversation does not load in ChatWindow — messages area stays empty although `POST /api/agent/[id]` + `GET /api/agent/[id]/events` fire. See `docs/handoff-other-project-running.md` for investigation leads.
+- **Cross-project pick race (fixed)**: clicking a session from another project used to switch the project but leave the chat empty. Root cause: `handleSelectSessionFromList` batches `setSelectedCwd(s.cwd)` + `onSelectSession(s)`; after commit the sidebar's cwd-notify effect fires `onCwdChange` → `AppShell.handleCwdChange`, which sees a project change and clobbers the just-picked session (`setSelectedSession(null)` + `sessionKey+1` + `router.replace("/")`). Fix in `AppShell.handleSelectSession`: when the picked session's project differs from `activeProjectRootRef.current`, set `suppressCwdBumpRef.current = true` (the same suppression `isRestore` already used) so the cwd sync no longer clobbers the pick, and clear the previous project's file tabs manually since `handleCwdChange`'s cleanup is suppressed. Same-project picks never hit this (handleCwdChange early-returns on equal project roots).
 
 ### File access allow-list
 - `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
@@ -216,3 +216,10 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 --accent --user-bg --tool-bg
 --font-mono
 ```
+
+
+## 沟通规则（用户全局要求）
+
+- 所有项目工作中一律用中文回复；代码、命令、文件名、技术术语可以保留英文原文。
+- 风格通俗易懂：先给结论、再讲原因；少堆术语，多用具体例子。
+- 除非用户明确要求英文，否则不要用英文回复。

@@ -46,28 +46,29 @@ Web 启动的会话 (registry) ┘        running: [{id, cwd}]              │ 
   - 点击后 Network 日志：`POST /api/agent/[id]` + `GET /api/agent/[id]/events` 均发出（observed 会话的流式连接已建立）。
 - `tsc --noEmit`、`npm run lint` 通过。
 - 已部署：仓库 `npm run build` → `.next` 覆盖全局 `/home/h/.npm-dlabal/lib/node_modules/@agegr/pi-web/.next` → 重启 `pi-web --no-open`（旧 `.next` 备份在 `/tmp/piweb-next-backup`，tmpfs 重启即失，回滚需重新 build）。仓库 `.next` 已删除，`npm run dev` 不受污染。
+- 重启坑：`kill` 主进程后，旧 `next-server` 子进程仍占着 30141，新实例会 `EADDRINUSE` 退出——先 `ss -tlnp | grep 30141` 清掉残留子进程再启动。
+- 本轮（2026-08-01）：两项任务已完成并部署，用户实测通过；知识沉淀见 `AGENTS.md` "Other-project running quick-switch box" 一节。
 
-## 已知问题 / 用户反馈（下一轮任务）
+## 下一轮任务（已完成，2026-08-01）
 
-### 1. 悬浮框位置要放进左侧边栏
+### 1. 悬浮框移入左侧边栏 ✅
 
-用户倾向把框放到最左侧栏（与项目树合并），不要右下角浮动。注意：
-- portal 渲染位置与视觉位置无关，改 `style` 即可（或干脆不 portal、直接渲染在侧边栏容器内——但移动端抽屉 `transform` 问题要重新考虑）。
-- 侧边栏关闭时框应仍可见（或跟随侧边栏收起逻辑）。
+- 去掉 `createPortal` 与 fixed 定位，改为直接渲染在会话列表容器顶部（项目树上方），随侧边栏收起逻辑隐藏（移动端抽屉 transform 问题自然消失）。
+- 样式改为内联紧凑形式（无卡片边框/阴影）。
 
-### 2. 点击后只切了项目、没进会话（重要）
+### 2. 跨项目点击后会话不加载 ✅（根因：竞态）
 
-用户实测：点击框条目后项目切过去了，但对话没切到目标会话，看不到实时输出。
+**根因**：点击框条目时 `handleSelectSessionFromList` 先 `setSelectedCwd(s.cwd)` 再 `onSelectSession(s)`（同一批次）。提交后侧边栏的 cwd-notify effect 触发 `onCwdChange` → `handleCwdChange`，发现项目变化，把刚选中的会话清掉（`setSelectedSession(null)` + `sessionKey+1` + `router.replace("/")`）——最终 URL 被重置、聊天区空。同项目点击不触发是因为 `handleCwdChange` 的同项目 early return。
 
-上一轮 CDP 实测的线索（当时误判为成功）：
-- 点击后 `POST /api/agent/[id]`（两次）+ `GET /api/agent/[id]/events`（两次）都发出了，说明 ChatWindow 挂载并建立了 observed 流式连接；
-- 但 chat 区 innerText 只有工具栏（"Full history / Generate title / Branches / System / π / Send / 模型选择…"），**没有任何消息内容**；
-- URL 被重置为 `/`（`AppShell.handleCwdChange` 里跨项目切换时 `router.replace("/")`，与侧边栏树点击跨项目会话行为一致，属既有行为）。
+**修复**（`components/AppShell.tsx` `handleSelectSession`）：跨项目选择时复用 `isRestore` 已有的 `suppressCwdBumpRef` 机制抑制这次 cwd 同步的清场动作，同时补上被抑制的 `handleCwdChange` 本该做的文件标签清理（`setFileTabs([])` 等）。URL 的 `?session=` 保留。
 
-建议排查方向：
-- `hooks/useAgentSession.ts` 对 `runtime: "observed"` 的处理：`GET /api/agent/[id]` 返回的 `state` 来自 `AttachmentSnapshot.state`（`app/api/agent/[id]/route.ts`），确认其中 `messages` 的字段结构与正常加载路径是否一致（`normalizeToolCalls` 的坑见 AGENTS.md）。
-- `AppShell.handleSelectSession` → `router.replace(?session=...)` 与 `handleCwdChange` 的 `router.replace("/")` 竞态：最终 URL 无 `session` 参数，若 ChatWindow 或 useAgentSession 依赖 URL 参数恢复，会被二次导航打断（`sessionKey` 已 bump，理论上不依赖 URL）。
-- 侧边栏点击同项目会话正常、跨项目点击异常 → 对比两条路径差异（`selectedCwd` 先切换、worktree fetch 触发、`handleCwdChange` 的 `suppressCwdBumpRef` 逻辑）。
+**验证**（dev server 30149 + headless Chrome CDP 实测）：
+- 框出现在侧边栏内（static 定位，x=0）
+- 点击 star-cube-nexus 条目：URL 保持 `?session=019fb7d7...`，消息区显示该会话内容，`/api/agent/[id]/events` SSE 连接建立
+- 反向切回 pi-web 正常；框内容随当前项目动态重算
+- `tsc --noEmit`、`npm run lint` 通过
+
+**未做**：重新 build 部署到全局 `.next`（仓库改动仍在 dev 验证阶段，部署流程见上轮）。
 
 ## 相关既有行为备忘
 

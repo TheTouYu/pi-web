@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -855,44 +854,6 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
 
   return (
     <>
-      {otherProjectRunning.length > 0 && !otherProjectDismissed && typeof document !== "undefined" && createPortal(
-        <div
-          role="status"
-          style={{
-            position: "fixed", right: 16, bottom: 88, zIndex: 500,
-            width: 280, maxWidth: "calc(100vw - 32px)",
-            background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 10,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.28)", overflow: "hidden",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid var(--border)", fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1.2s ease-in-out infinite", flexShrink: 0 }} />
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("otherProjects.running")}</span>
-            <button
-              onClick={() => setOtherProjectDismissed(true)}
-              title={t("otherProjects.dismiss")}
-              aria-label={t("otherProjects.dismiss")}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, padding: 0, background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 12, lineHeight: 1 }}
-            >✕</button>
-          </div>
-          {otherProjectRunning.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => handleSelectSessionFromList(s)}
-              title={t("otherProjects.switch")}
-              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", padding: "8px 10px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", color: "var(--text)" }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{projectNameOf(s.projectRoot ?? s.cwd)}</span>
-              <span style={{ width: "100%", fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.firstMessage || s.name || "…"}
-              </span>
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {customPathOpen && (
         <DirectoryPicker
@@ -1544,6 +1505,36 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
 
       {/* Session list */}
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      {/* Other-project running sessions (switcher merged into the tree) */}
+      {otherProjectRunning.length > 0 && !otherProjectDismissed && (
+        <div role="status" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 6, marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px 4px", fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1.2s ease-in-out infinite", flexShrink: 0 }} />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("otherProjects.running")}</span>
+            <button
+              onClick={() => setOtherProjectDismissed(true)}
+              title={t("otherProjects.dismiss")}
+              aria-label={t("otherProjects.dismiss")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, padding: 0, background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 12, lineHeight: 1 }}
+            >✕</button>
+          </div>
+          {otherProjectRunning.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => handleSelectSessionFromList(s)}
+              title={t("otherProjects.switch")}
+              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", padding: "6px 10px", background: "none", border: "none", borderRadius: 6, cursor: "pointer", textAlign: "left", color: "var(--text)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{projectNameOf(s.projectRoot ?? s.cwd)}</span>
+              <span style={{ width: "100%", fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.firstMessage || s.name || "…"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.loading")}
