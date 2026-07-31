@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -169,6 +170,10 @@ function getRecentProjects(sessions: SessionInfo[]): string[] {
 /** Substitute the home dir prefix with ~ (no path truncation — see PathLabel) */
 function displayCwd(cwd: string, homeDir?: string): string {
   return (homeDir && cwd.startsWith(homeDir)) ? "~" + cwd.slice(homeDir.length) : cwd;
+}
+
+function projectNameOf(cwd: string): string {
+  return cwd.split("/").filter(Boolean).pop() ?? cwd;
 }
 
 /**
@@ -416,6 +421,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+const [runningCwdById, setRunningCwdById] = useState<Map<string, string>>(() => new Map());
+const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   // Once the SSE stream has delivered a frame it is the source of truth for
@@ -477,10 +484,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
     source.onmessage = (e) => {
       try {
-        const data = JSON.parse(e.data) as { type?: string; runningSessionIds?: string[] };
+        const data = JSON.parse(e.data) as { type?: string; runningSessionIds?: string[]; running?: Array<{ id: string; cwd?: string }> };
         if (data.type === "running") {
           sseAuthoritativeRef.current = true;
           setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+          setRunningCwdById(new Map((data.running ?? []).filter((s) => s.cwd).map((s) => [s.id, s.cwd as string])));
         }
       } catch {
         // ignore malformed frames
@@ -767,6 +775,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onSelectSession(s);
   }, [onSelectSession]);
 
+  // Running sessions whose project differs from the one currently open —
+  // shown in a floating box so they can be switched to without browsing.
+  const otherProjectRunning = useMemo(() => {
+    const currentRoot = projectRootFor(selectedCwd);
+    const result: SessionInfo[] = [];
+    for (const id of runningSessionIds) {
+      if (id === selectedSessionId) continue; // already viewing it
+      const listed = allSessions.find((s) => s.id === id);
+      const cwd = listed?.cwd ?? runningCwdById.get(id) ?? "";
+      if (!cwd) continue; // no location info yet — nothing to compare
+      if ((listed?.projectRoot ?? cwd) === currentRoot) continue; // visible in the current tree already
+      result.push(listed ?? { id, cwd, path: "", created: "", modified: "", messageCount: 0, firstMessage: "" });
+    }
+    return result;
+  }, [runningSessionIds, runningCwdById, allSessions, selectedCwd, selectedSessionId, projectRootFor]);
+
+  // Dismiss only hides the box until a genuinely new session starts running.
+  const seenOtherIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = otherProjectRunning.map((s) => s.id);
+    const hasNew = ids.some((id) => !seenOtherIdsRef.current.has(id));
+    for (const id of ids) seenOtherIdsRef.current.add(id);
+    if (hasNew) setOtherProjectDismissed(false);
+  }, [otherProjectRunning]);
+
   const handleNewSession = useCallback(() => {
     if (!selectedCwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
@@ -821,7 +854,46 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionTree = buildSessionTree(filteredSessions);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <>
+      {otherProjectRunning.length > 0 && !otherProjectDismissed && typeof document !== "undefined" && createPortal(
+        <div
+          role="status"
+          style={{
+            position: "fixed", right: 16, bottom: 88, zIndex: 500,
+            width: 280, maxWidth: "calc(100vw - 32px)",
+            background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 10,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.28)", overflow: "hidden",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid var(--border)", fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1.2s ease-in-out infinite", flexShrink: 0 }} />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("otherProjects.running")}</span>
+            <button
+              onClick={() => setOtherProjectDismissed(true)}
+              title={t("otherProjects.dismiss")}
+              aria-label={t("otherProjects.dismiss")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, padding: 0, background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 12, lineHeight: 1 }}
+            >✕</button>
+          </div>
+          {otherProjectRunning.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => handleSelectSessionFromList(s)}
+              title={t("otherProjects.switch")}
+              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", padding: "8px 10px", background: "none", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", color: "var(--text)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{projectNameOf(s.projectRoot ?? s.cwd)}</span>
+              <span style={{ width: "100%", fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.firstMessage || s.name || "…"}
+              </span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {customPathOpen && (
         <DirectoryPicker
           busy={customPathValidating}
@@ -1619,6 +1691,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </div>
       )}
     </div>
+    </>
   );
 }
 

@@ -1044,12 +1044,16 @@ export function destroyRpcSessionsForCwd(cwd: string): number {
   return sessions.length;
 }
 
-export function getRunningRpcSessionIds(): string[] {
-  const ids = new Set<string>();
+export function getRunningRpcSessions(): { id: string; cwd: string }[] {
+  const sessions: { id: string; cwd: string }[] = [];
   for (const [sessionId, session] of getRegistry()) {
-    if (session.isRunning()) ids.add(session.sessionId || sessionId);
+    if (session.isRunning()) sessions.push({ id: session.sessionId || sessionId, cwd: session.cwd });
   }
-  return [...ids];
+  return sessions;
+}
+
+export function getRunningRpcSessionIds(): string[] {
+  return getRunningRpcSessions().map((s) => s.id);
 }
 
 // ----------------------------------------------------------------------------

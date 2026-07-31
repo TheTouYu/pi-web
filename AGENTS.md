@@ -150,6 +150,7 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 
 ### Running state SSE + reconciliation
 - The sidebar listens to `/api/agent/running/events`, backed by `subscribeRunningSessions()` in `lib/rpc-manager.ts`, so running badges update without polling.
+- The SSE payload is `{ type: "running", runningSessionIds: string[], running: [{ id, cwd }] }`. The `running` array (with cwd) was added for the other-project quick-switch box — keep it in sync when touching the route. Observed (terminal) session cwds are fetched per-change from hub snapshots via `getObservedSession()`; `encodeRunning` is async and uses a `generation` counter so a slow stale call cannot overwrite a newer snapshot.
 - `useAgentSession` still treats per-session SSE as primary for chat events, but while a run is active it periodically calls `GET /api/agent/[id]` and also reconciles on `visibilitychange`/`online`. This fixes missed `agent_end` events from background tabs or half-open connections.
 - Prompt runs use a monotonic run id; late SSE or slow reconciliation responses from an old run must be ignored so they cannot resurrect stale streaming bubbles.
 
@@ -159,6 +160,12 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 - New worktrees are created under `<repoRoot>-worktrees/<sanitized-branch>`. Existing branches are reused; otherwise `git worktree add -b` creates the branch.
 - Removing a dirty worktree returns `409` with `{ dirty: true }` so the UI can ask before retrying with `force`.
 - Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
+
+### Other-project running quick-switch box (`components/SessionSidebar.tsx`)
+- A floating box lists running sessions whose project root differs from the current one; clicking reuses `handleSelectSessionFromList` (same path as sidebar tree clicks: `setSelectedCwd` + `onSelectSession`).
+- The box must render via `createPortal(document.body)` — on mobile the sidebar container gets `transform: translateX(-100%)` when closed, which drags non-portaled fixed children off-screen.
+- Session project root comes from the `allSessions` entry (`projectRoot ?? cwd`); sessions with no known cwd are skipped. Dismiss (✕) only resets when a genuinely new session id appears (`seenOtherIdsRef`).
+- KNOWN ISSUE (next iteration): clicking switches the project but the target conversation does not load in ChatWindow — messages area stays empty although `POST /api/agent/[id]` + `GET /api/agent/[id]/events` fire. See `docs/handoff-other-project-running.md` for investigation leads.
 
 ### File access allow-list
 - `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
