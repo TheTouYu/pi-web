@@ -284,10 +284,21 @@ export function AppShell() {
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
-    if (isRestore) {
-      // Suppress the redundant sessionKey bump that would come from the
-      // onCwdChange effect firing after setSelectedCwd in the sidebar
+    // Picking a session from another project: the sidebar's setSelectedCwd
+    // triggers the onCwdChange effect after this handler, and handleCwdChange
+    // would see a project change and clobber the session we just picked. Same
+    // race the isRestore suppression already handles — suppress it too.
+    const sessionProject = session.projectRoot ?? session.cwd;
+    const crossesProject = Boolean(sessionProject && activeProjectRootRef.current && sessionProject !== activeProjectRootRef.current);
+    if (isRestore || crossesProject) {
       suppressCwdBumpRef.current = true;
+      if (crossesProject) {
+        // Same cleanup the (now suppressed) handleCwdChange would do on a
+        // genuine project switch: drop the previous project's file tabs.
+        setFileTabs([]);
+        setActiveFileTabId(null);
+        setRightPanelOpen(false);
+      }
     }
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
