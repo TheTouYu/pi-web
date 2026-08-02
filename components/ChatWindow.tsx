@@ -197,7 +197,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
   const {
     loading, error, messages, entryIds, streamState,
-    livePresence, sharedControl, enableSharedControl, disableSharedControl,
+    livePresence,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
@@ -209,7 +209,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
-    handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
+    handleCompact, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
@@ -332,14 +332,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     : null;
 
   const chatInputElement = (
-    <div className={livePresence && !sharedControl ? "pointer-events-none opacity-60" : undefined} aria-disabled={!!livePresence && !sharedControl}>
     <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
       onAbort={handleAbort}
-      onSteer={agentRunning ? handleSteer : undefined}
-      onFollowUp={agentRunning ? handleFollowUp : undefined}
-      onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={sessionBusy}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
@@ -372,7 +368,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
     />
-    </div>
   );
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
@@ -405,13 +400,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       {livePresence && (
         <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-panel)] px-4 py-2 text-sm">
           <span>{livePresence.connected ? "正在观察终端 Pi" : "终端 Pi 正在重连"}</span>
-          <button
-            type="button"
-            className="rounded border border-[var(--border)] px-3 py-1 hover:bg-[var(--bg-hover)]"
-            onClick={() => void (sharedControl ? disableSharedControl() : enableSharedControl())}
-          >
-            {sharedControl ? "关闭 Shared Control" : "启用 Shared Control"}
-          </button>
         </div>
       )}
       {isDragOver && !sessionBusy && (

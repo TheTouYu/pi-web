@@ -19,14 +19,13 @@ export async function sendRuntimeCommand(
   sessionId: string,
   command: Record<string, unknown>,
   startWeb: () => Promise<{ session: AgentSessionWrapper }>,
-  identity?: { clientId?: string; commandId?: string; controlToken?: string },
+  identity?: { clientId?: string; commandId?: string },
 ): Promise<unknown> {
   const observed = await getObservedSession(sessionId);
   if (observed) {
     return sendObservedCommand(
       sessionId,
       identity?.clientId || "observer",
-      identity?.controlToken,
       identity?.commandId || randomUUID(),
       command,
     );

@@ -13,7 +13,6 @@ const instances = new Map();
 const claims = new Map();
 const subscribers = new Set();
 const pendingCommands = new Map();
-const controls = new Map();
 const explicitContinuationRequired = new Set();
 let lastPresenceSnapshot = "";
 let lockFd;
@@ -50,7 +49,6 @@ function publishPresence() {
 function releaseClaim(claim, requireExplicit = false) {
   if (claim.reservationTimer) clearTimeout(claim.reservationTimer);
   if (requireExplicit) explicitContinuationRequired.add(claim.sessionId);
-  for (const [token, control] of controls) if (control.sessionId === claim.sessionId) controls.delete(token);
   claims.delete(claim.sessionId);
   publish({ type: "claim_released", sessionId: claim.sessionId });
   publishPresence();
@@ -158,22 +156,9 @@ function clientRequest(socket, message) {
     explicitContinuationRequired.delete(message.sessionId); claims.set(message.sessionId, { kind: "web", sessionId: message.sessionId, ownerId: message.ownerId }); data = { claimed: true };
   } else if (message.type === "web_release") {
     const claim = claims.get(message.sessionId); if (claim?.kind === "web" && claim.ownerId === message.ownerId) claims.delete(message.sessionId); data = { released: true };
-  } else if (message.type === "control_acquire") {
-    const claim = claims.get(message.sessionId);
-    if (!claim?.connected) return send(socket, { type: "response", requestId: message.requestId, ok: false, error: { code: "unavailable", message: "Observed runtime is not connected" } });
-    const token = randomUUID(); controls.set(token, { token, clientId: message.clientId, sessionId: message.sessionId, instanceId: claim.instanceId, generation: claim.generation, lastUsed: Date.now() });
-    data = { token, instanceId: claim.instanceId, capabilities: claim.snapshot.capabilities, expiresInMs: C.CONTROL_IDLE_EXPIRY_MS };
-  } else if (message.type === "control_release") {
-    const control = controls.get(message.token); if (control?.clientId === message.clientId) controls.delete(message.token); data = { released: true };
   } else if (message.type === "command") {
     const claim = claims.get(message.sessionId);
     if (!claim) return send(socket, { type: "response", requestId: message.requestId, ok: false, error: { code: "no_claim", message: "No observed runtime claim" } });
-    const control = controls.get(message.controlToken);
-    if (!control || control.clientId !== message.clientId || control.sessionId !== message.sessionId || control.instanceId !== claim.instanceId || control.generation !== claim.generation || Date.now() - control.lastUsed > C.CONTROL_IDLE_EXPIRY_MS) {
-      if (control) controls.delete(message.controlToken);
-      return send(socket, { type: "response", requestId: message.requestId, ok: false, error: { code: "control_required", message: "Enable Shared Control on this Live Session page" } });
-    }
-    control.lastUsed = Date.now();
     if (!claim.connected) return send(socket, { type: "response", requestId: message.requestId, ok: false, error: { code: "reserved", message: "Observed runtime is reconnecting" } });
     if (!claim.snapshot.capabilities.includes(message.command.type)) return send(socket, { type: "response", requestId: message.requestId, ok: false, error: { code: "unsupported", message: `Observed runtime does not support ${message.command.type}` } });
     const commandId = message.commandId || randomUUID();

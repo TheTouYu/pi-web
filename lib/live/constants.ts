@@ -1,7 +1,7 @@
 export const PI_VERSION = "0.82.1";
 export const PI_WEB_VERSION = "0.8.2";
 export const COMPANION_VERSION = "1.0.0";
-export const HUB_PROTOCOL_VERSION = 1;
+export const HUB_PROTOCOL_VERSION = 2;
 
 export const LIVE_LIMITS = Object.freeze({
   maxFrameBytes: 16 * 1024 * 1024,
@@ -9,8 +9,6 @@ export const LIVE_LIMITS = Object.freeze({
   reconnectMaxMs: 30_000,
   disconnectReservationMs: 2 * 60_000,
   interruptedOverlayMs: 10 * 60_000,
-  controlReconnectGraceMs: 30_000,
-  controlIdleExpiryMs: 15 * 60_000,
   loginAbsoluteExpiryMs: 7 * 24 * 60 * 60_000,
   commandDedupeEntries: 256,
   commandDedupeMs: 15 * 60_000,

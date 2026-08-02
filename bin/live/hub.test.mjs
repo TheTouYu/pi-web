@@ -35,6 +35,54 @@ function connect(socketPath) {
   });
 }
 
+test("commands without a control token are forwarded to the companion", async (t) => {
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-hub-test-"));
+  const hub = fork(path.join(import.meta.dirname, "hub.js"), [], {
+    env: { ...process.env, XDG_RUNTIME_DIR: runtime },
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  t.after(async () => {
+    hub.kill("SIGTERM");
+    if (hub.exitCode === null) await new Promise((resolve) => hub.once("exit", resolve));
+    fs.rmSync(runtime, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    hub.once("message", resolve);
+    hub.once("exit", (code) => reject(new Error(`Hub exited early: ${code}`)));
+  });
+
+  const socketPath = path.join(runtime, `pi-web-${process.getuid?.() ?? "unknown"}`, "live.sock");
+  const companion = await connect(socketPath);
+  t.after(() => companion.socket.destroy());
+  companion.socket.write(encodeFrame({
+    type: "hello",
+    version: { piVersion: C.PI_VERSION, piWebVersion: C.PI_WEB_VERSION, companionVersion: C.COMPANION_VERSION, protocolVersion: C.HUB_PROTOCOL_VERSION },
+    instanceId: "terminal-1",
+    pid: process.pid,
+  }));
+  await waitFor(companion.messages, (message) => message.type === "hello_ok");
+  companion.socket.write(encodeFrame({ type: "snapshot", snapshot: {
+    instanceId: "terminal-1", pid: process.pid, generation: 1, sessionId: "session-1", sessionFile: "/tmp/session-1.jsonl",
+    cwd: "/tmp", leafId: null, entryCount: 0, runId: 0, baseLeafId: null, busy: false, messages: [], capabilities: ["prompt"], state: {},
+  } }));
+  await waitFor(companion.messages, (message) => message.type === "attachment_result");
+  companion.messages.length = 0;
+
+  // Web client sends a prompt with no control token; a legacy client may still send one.
+  for (const controlToken of [undefined, "legacy-token"]) {
+    const client = await connect(socketPath);
+    client.socket.write(encodeFrame({
+      type: "command", requestId: `req-${controlToken ?? "none"}`, sessionId: "session-1", clientId: "browser-1",
+      commandId: `cmd-${controlToken ?? "none"}`, command: { type: "prompt", message: "hi" }, ...(controlToken ? { controlToken } : {}),
+    }));
+    await waitFor(companion.messages, (message) => message.type === "command" && message.commandId === `cmd-${controlToken ?? "none"}`);
+    companion.socket.write(encodeFrame({ type: "command_result", instanceId: "terminal-1", commandId: `cmd-${controlToken ?? "none"}`, ok: true, result: null }));
+    const response = await waitFor(client.messages, (message) => message.type === "response" && message.ok === true);
+    assert.equal(response.ok, true);
+    client.socket.destroy();
+  }
+});
+
 test("ordinary live events do not rebroadcast unchanged presence", async (t) => {
   const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-hub-test-"));
   const hub = fork(path.join(import.meta.dirname, "hub.js"), [], {

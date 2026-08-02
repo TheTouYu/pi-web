@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-const VERSION = { piVersion: "0.82.1", piWebVersion: "0.8.2", companionVersion: "1.0.0", protocolVersion: 1 };
+const VERSION = { piVersion: "0.82.1", piWebVersion: "0.8.2", companionVersion: "1.0.0", protocolVersion: 2 };
 const MAX_FRAME = 16 * 1024 * 1024;
 const MAX_IMAGES = 10;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;

@@ -55,8 +55,8 @@ export async function getObservedSession(sessionId: string): Promise<{ presence:
 export async function getObservedPresence(): Promise<LivePresence[]> {
   try { return (await hubRequest<{ sessions: LivePresence[] }>({ type: "presence" })).sessions; } catch { return []; }
 }
-export function sendObservedCommand<T>(sessionId: string, clientId: string, controlToken: string | undefined, commandId: string, command: Record<string, unknown>): Promise<T> {
-  return hubRequest({ type: "command", sessionId, clientId, controlToken, commandId, command }, 30_000);
+export function sendObservedCommand<T>(sessionId: string, clientId: string, commandId: string, command: Record<string, unknown>): Promise<T> {
+  return hubRequest({ type: "command", sessionId, clientId, commandId, command }, 30_000);
 }
 
 export function subscribeHub(onMessage: (message: Record<string, unknown>) => void): () => void {

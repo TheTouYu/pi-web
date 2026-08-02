@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { resolveRuntime, sendRuntimeCommand } from "@/lib/live/runtime-router";
-import { hubRequest } from "@/lib/live/hub-client";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 // POST /api/agent/[id] - Send a command to an existing session
@@ -14,14 +13,6 @@ export async function POST(
   try {
     const body = await req.json() as { type: string; [key: string]: unknown };
     const clientId = req.headers.get("x-pi-web-client-id") ?? "observer";
-    if (body.type === "acquire_control") {
-      const result = await hubRequest({ type: "control_acquire", sessionId: id, clientId });
-      return NextResponse.json({ success: true, data: result });
-    }
-    if (body.type === "release_control") {
-      const result = await hubRequest({ type: "control_release", sessionId: id, clientId, token: body.controlToken });
-      return NextResponse.json({ success: true, data: result });
-    }
 
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
@@ -31,11 +22,10 @@ export async function POST(
     const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
 
     const commandId = req.headers.get("x-pi-web-command-id") ?? undefined;
-    const controlToken = req.headers.get("x-pi-web-control-token") ?? undefined;
     const result = await sendRuntimeCommand(id, body, async () => {
       const { guardedStartRpcSession } = await import("@/lib/live/runtime-router");
       return guardedStartRpcSession(id, filePath, cwd);
-    }, { clientId, commandId, controlToken });
+    }, { clientId, commandId });
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
