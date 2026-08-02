@@ -65,9 +65,14 @@ export function isApiRequestHostAllowed(
   if (!hostname) return false;
   if (isLoopbackHostname(hostname) || isIP(hostname)) return true;
 
-  return configuredHostnames.some(
-    (configured) => normalizeConfiguredHostname(configured) === hostname,
-  );
+  return configuredHostnames.some((configured) => {
+    const normalized = normalizeConfiguredHostname(configured);
+    if (!normalized) return false;
+    if (normalized.startsWith("*.")) {
+      return hostname === normalized.slice(2) || hostname.endsWith(normalized.slice(1));
+    }
+    return normalized === hostname;
+  });
 }
 
 /** Reject browser cross-site API requests while preserving non-browser clients. */
