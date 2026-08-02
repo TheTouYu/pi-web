@@ -56,7 +56,7 @@ function parseSearchOutput(raw: string): SkillSearchResult[] {
 
 async function searchSkillsApi(query: string, limit: number): Promise<SkillSearchResult[]> {
   const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`skills.sh search failed: HTTP ${res.status}`);
 
   const data = (await res.json()) as SkillsApiResponse;
@@ -99,7 +99,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ results });
     } catch {
       const { stdout, stderr } = await runNpx(["skills", "find", query.trim()], {
-        timeout: 20000,
+        // npx 首次运行要现下载 skills 包，20 秒不够
+        timeout: 120_000,
         env: { ...process.env, FORCE_COLOR: "0" },
       });
 
@@ -111,6 +112,11 @@ export async function POST(req: Request) {
     const raw = (err.stdout ?? "") + (err.stderr ?? "");
     const results = raw ? parseSearchOutput(raw) : [];
     if (results.length > 0) return NextResponse.json({ results });
-    return NextResponse.json({ error: err.message ?? String(e) }, { status: 500 });
+    const message = err.message ?? String(e);
+    // execFile 超时/失败时给用户友好提示，不直接甩原始命令
+    const friendly = message.startsWith("Command failed")
+      ? "技能搜索失败：skills.sh 响应超时或不可达，请稍后重试"
+      : message;
+    return NextResponse.json({ error: friendly }, { status: 500 });
   }
 }

@@ -25,18 +25,18 @@ npm install -g @agegr/pi-web
 pi-web
 ```
 
-Then open [http://127.0.0.1:30141](http://127.0.0.1:30141). The CLI will try to open the browser automatically after the server is ready. Pi Web listens on `127.0.0.1` by default.
+Then open [http://127.0.0.1:30141](http://127.0.0.1:30141). The CLI will try to open the browser automatically after the server is ready. Pi Web listens on all network interfaces (`0.0.0.0`) by default, so it is available on the local network.
 
 **Options:**
 
 ```bash
 pi-web --port 8080              # custom port
-pi-web --hostname 0.0.0.0       # expose on a trusted network
+pi-web --hostname 127.0.0.1   # listen on this machine only
 pi-web -p 8080 -H 0.0.0.0       # combine options
 pi-web --no-open                # do not open the browser automatically
 
 PORT=8080 pi-web                # environment variable is also supported
-PI_WEB_HOSTNAME=0.0.0.0 pi-web  # explicit network exposure
+PI_WEB_HOSTNAME=127.0.0.1 pi-web  # explicitly restrict to this machine
 PI_WEB_ALLOWED_HOSTS=pi-web.internal pi-web  # allow an exact proxy/custom hostname
 PI_WEB_NO_OPEN=1 pi-web         # useful when running as a background service
 ```
