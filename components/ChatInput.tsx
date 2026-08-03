@@ -15,6 +15,7 @@ import {
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
+import { useRole } from "@/hooks/useRole";
 
 export interface AttachedImage {
   data: string;   // base64, no prefix
@@ -1001,7 +1002,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
 
 
-  return (
+  const role = useRole();
+
+  return role === "readonly" ? (
+    <div style={{ flexShrink: 0, padding: "0 16px 8px", paddingRight: isMobile ? 16 : 52 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 12, color: "var(--text-muted)", fontSize: 13, background: "var(--bg-panel)" }}>
+        <span>🔒</span>
+        <span>{t("chat.readonlyNotice")}</span>
+      </div>
+    </div>
+  ) : (
     <div
       style={{
         flexShrink: 0,

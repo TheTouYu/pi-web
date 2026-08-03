@@ -176,6 +176,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.submit": "提交",
     "chat.extensionInput": "扩展终端输入",
     "chat.extensionPanel": "扩展面板",
+    "chat.readonlyNotice": "只读模式：当前账号仅可查看，无法发送消息或操作",
     "chat.close": "关闭",
     "chat.queued": "已排队 · {count}",
     "chat.recall": "移回输入框",

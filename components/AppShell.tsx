@@ -15,6 +15,7 @@ import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useRole } from "@/hooks/useRole";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
@@ -41,6 +42,7 @@ export function AppShell() {
   const { isDark, toggleTheme } = useTheme();
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();
+  const canWrite = useRole() === "admin";
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
@@ -559,12 +561,12 @@ export function AppShell() {
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
         onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
+        onNewSession={canWrite ? handleNewSession : undefined}
         initialSessionId={initialSessionId}
         skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
-        onSessionDeleted={handleSessionDeleted}
+        onSessionDeleted={canWrite ? handleSessionDeleted : undefined}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
@@ -574,7 +576,7 @@ export function AppShell() {
         onAtMentions={handleAtMentions}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
-        {([
+        {canWrite && ([
           {
              label: translate("common.models"),
             onClick: () => setModelsConfigOpen(true),
@@ -1011,7 +1013,7 @@ export function AppShell() {
                   </button>
                 );
               })()}
-              <BranchNavigator
+              {canWrite && <BranchNavigator
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
                 onLeafChange={handleBranchLeafChange}
@@ -1021,8 +1023,8 @@ export function AppShell() {
                 open={activeTopPanel === "branches"}
                 onToggle={() => toggleTopPanel("branches")}
                 hasSession
-              />
-              <button
+              />}
+              {canWrite && <button
                 ref={systemBtnRef}
                 onClick={() => toggleTopPanel("system")}
                  title={translate("system.prompt")}
@@ -1049,7 +1051,7 @@ export function AppShell() {
                   <line x1="8" y1="17" x2="13" y2="17" />
                 </svg>
                  {!isMobile && <span>{translate("system.label")}</span>}
-              </button>
+              </button>}
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -1401,8 +1403,8 @@ export function AppShell() {
               session={selectedSession}
               newSessionCwd={effectiveNewSessionCwd}
               onAgentEnd={handleAgentEnd}
-              onSessionCreated={handleSessionCreated}
-              onSessionForked={handleSessionForked}
+              onSessionCreated={canWrite ? handleSessionCreated : undefined}
+              onSessionForked={canWrite ? handleSessionForked : undefined}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}

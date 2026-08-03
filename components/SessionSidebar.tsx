@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
+import { useRole } from "@/hooks/useRole";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 
@@ -390,6 +391,7 @@ function PiWebTitle() {
 
 export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
   const { t } = useI18n();
+  const canWrite = useRole() === "admin";
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -894,7 +896,7 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
           <div style={{ display: "flex", gap: 6 }}>
             <button
               onClick={handleNewSession}
-              disabled={!selectedCwd}
+              disabled={!selectedCwd || !canWrite}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                 background: "var(--bg-hover)",
@@ -1600,12 +1602,13 @@ const [otherProjectDismissed, setOtherProjectDismissed] = useState(false);
             runningSessionIds={runningSessionIds}
             unreadSessionIds={unreadSessionIds}
             onSelectSession={handleSelectSessionFromList}
-            onRenamed={loadSessions}
-            onSessionDeleted={(id) => {
+            onRenamed={canWrite ? loadSessions : undefined}
+            onSessionDeleted={canWrite ? (id) => {
               onSessionDeleted?.(id);
               loadSessions();
-            }}
+            } : undefined}
             depth={0}
+            canWrite={canWrite}
           />
         ))}
       </div>
@@ -1737,6 +1740,7 @@ function SessionTreeItem({
   onRenamed,
   onSessionDeleted,
   depth,
+  canWrite,
 }: {
   node: SessionTreeNode;
   selectedSessionId: string | null;
@@ -1746,6 +1750,7 @@ function SessionTreeItem({
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
   depth: number;
+  canWrite: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -1776,6 +1781,7 @@ function SessionTreeItem({
           hasChildren={hasChildren}
           collapsed={collapsed}
           onToggleCollapse={() => setCollapsed((v) => !v)}
+          canWrite={canWrite}
         />
       </div>
       {hasChildren && !collapsed && (
@@ -1791,6 +1797,7 @@ function SessionTreeItem({
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               depth={depth + 1}
+              canWrite={canWrite}
             />
           ))}
         </div>
@@ -1876,6 +1883,7 @@ function SessionItem({
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
+  canWrite,
 }: {
   session: SessionInfo;
   isSelected: boolean;
@@ -1888,6 +1896,7 @@ function SessionItem({
   hasChildren?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  canWrite: boolean;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -2121,7 +2130,7 @@ function SessionItem({
           )}
 
           {/* Action buttons — shown on hover */}
-          {hovered && (
+          {hovered && canWrite && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <button
                 onClick={startRename}

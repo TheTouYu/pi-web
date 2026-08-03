@@ -176,6 +176,7 @@ export const enLocale: LocalePlugin = {
     "chat.submit": "Submit",
     "chat.extensionInput": "Extension terminal input",
     "chat.extensionPanel": "Extension panel",
+    "chat.readonlyNotice": "Read-only mode: this account can only view, not send messages or operate",
     "chat.close": "Close",
     "chat.queued": "Queued · {count}",
     "chat.recall": "Recall to input",
