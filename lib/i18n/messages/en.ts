@@ -8,6 +8,7 @@ export const enLocale: LocalePlugin = {
     "common.ok": "OK",
     "common.language": "Language",
     "common.models": "Models",
+    "common.switchAccount": "Switch account",
     "common.skills": "Skills",
     "common.plugins": "Plugins",
     "sidebar.hide": "Hide sidebar",

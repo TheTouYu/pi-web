@@ -412,6 +412,14 @@ export function AppShell() {
     setInitialSessionRestored(true);
   }, []);
 
+  // 退出当前身份并回到登录页，用于切换管理员/只读账号。
+  const handleSwitchAccount = useCallback(() => {
+    void fetch("/api/web-auth/logout", { method: "POST" }).catch(() => {}).finally(() => {
+      try { localStorage.removeItem("pi-web-role"); } catch { /* ignore */ }
+      location.href = "/login";
+    });
+  }, []);
+
   const handleSessionDeleted = useCallback((sessionId: string) => {
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
@@ -636,6 +644,26 @@ export function AppShell() {
             {label}
           </button>
         ))}
+        <button
+          onClick={handleSwitchAccount}
+          title={translate("common.switchAccount")}
+          style={{
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            height: 32, padding: 0, background: "none", border: "none",
+            borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
+            fontSize: 12,
+            transition: "background 0.12s, color 0.12s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          {translate("common.switchAccount")}
+        </button>
       </div>
     </>
   );

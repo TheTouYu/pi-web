@@ -63,10 +63,11 @@ systemctl --user start pi-web
   - `ChatWindow`：fork 按钮、onEditContent、扩展面板（终端）全部禁用/不渲染
   - `AppShell`：BranchNavigator、system prompt 按钮、底部 models/skills/plugins 配置按钮、onNewSession/onSessionDeleted 回调
   - `SessionSidebar`：新建按钮禁用、hover 改名/删除按钮隐藏（`canWrite` prop 透传）
+  - `AppShell` 侧边栏底部有「切换账号」按钮（所有角色可见）：调 `POST /api/web-auth/logout` 清 cookie + 清 localStorage 的 `pi-web-role`，跳回登录页重新选身份
 
 ### 只读密码
 
-当前值：`piread`（配置在 `~/.config/systemd/user/pi-web.service` 的 `PI_WEB_READONLY_PASSWORD`）。改密码后需 `daemon-reload` + 重启。注意：密码简单易被猜到，只读账号虽无写权限，但能看到全部聊天记录和文件，敏感环境请用强密码。
+配置在 `~/.config/systemd/user/pi-web.service` 的 `PI_WEB_READONLY_PASSWORD` 环境变量（或 `~/.pi/agent/pi-web-readonly-password.json` 文件）。改密码后需 `daemon-reload` + 重启。注意：密码简单易被猜到，只读账号虽无写权限，但能看到全部聊天记录和文件，敏感环境请用强密码。
 
 ## 三、微信访问提示"请在浏览器中打开"
 

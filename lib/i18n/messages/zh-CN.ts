@@ -8,6 +8,7 @@ export const zhCNLocale: LocalePlugin = {
     "common.ok": "确定",
     "common.language": "语言",
     "common.models": "模型",
+    "common.switchAccount": "切换账号",
     "common.skills": "技能",
     "common.plugins": "插件",
     "sidebar.hide": "隐藏侧边栏",
