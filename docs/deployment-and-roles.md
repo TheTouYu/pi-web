@@ -76,3 +76,16 @@ systemctl --user start pi-web
   - 微信内分享用 quick tunnel 临时链接（`python3 /home/h/.pi/agent/skills/cloudflare-tunnel/scripts/tunnel_helper.py quick --url http://localhost:30141`），缺点是重启会变、关机失效
   - 固定域名只能引导用户"在浏览器打开"
   - 备案需国内服务器 + 实名 + 数周审核，个人项目不划算
+
+## 四、移动端实时性（手机浏览器看 observed 会话慢几十秒）
+
+**现象**：终端已跑完，手机网页端还显示"正在思考..."，几十秒后突然全部出现并结束。
+
+**原因**：不是服务端慢，也不是程序 bug——服务端链路（pi → companion → hub → SSE）逐事件实时转发，实测本地 1-11ms、公网 190-800ms。真正原因是**移动网络（运营商代理/浏览器）对 SSE 长连接的数据缓冲**：事件积压后批量 flush，网页端"突然全部加载"。桌面浏览器还可能叠加后台标签页节流。
+
+**已做的优化**（`hooks/useAgentSession.ts` + `app/api/agent/[id]/route.ts`）：
+- observed 会话的 `GET /api/agent/[id]` 现在返回 `liveMessages`（hub 快照里的进行中消息）
+- 网页端 reconcile 轮询（observed 模式 5 秒 / web 模式 15 秒）用幂等合并（`mergeObservedMessages`，按 role+文本前缀/toolCallId 匹配尾部消息）把快照消息并入列表，SSE 停滞超 3 秒时才覆盖 streaming bubble（避免回退）
+- 短连接 GET 不会被代理缓冲，所以轮询成了移动端的实际同步主路径；SSE 正常时轮询只是无害兜底
+
+**局限**：轮询最多 5 秒一跳，看逐字输出仍不如终端流畅；要根治需换 WebSocket（改动大，暂未做）。

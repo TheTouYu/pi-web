@@ -50,6 +50,7 @@ export async function GET(
         running: runtime.presence.busy,
         runtime: "observed",
         presence: runtime.presence,
+        liveMessages: runtime.snapshot.messages ?? null,
         state: { ...runtime.snapshot.state, isStreaming: runtime.snapshot.busy, isPromptRunning: runtime.snapshot.busy },
       });
     }

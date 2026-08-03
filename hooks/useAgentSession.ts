@@ -3,11 +3,15 @@
 import { useState, useCallback, useRef, useEffect, useMemo, useReducer } from "react";
 import type {
   AgentMessage,
+  AssistantMessage,
   ExtensionStatusItem,
   ExtensionUiRequest,
   ExtensionWidgetItem,
   SessionInfo,
   SessionTreeNode,
+  TextContent,
+  ToolResultMessage,
+  UserMessage,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -88,6 +92,62 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
   return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
 }
 
+// ---- Observed-session live message merge -----------------------------------
+// Terminal snapshots carry the in-flight messages of the current run. They
+// arrive repeatedly (poll + live_snapshot) with no ids, so merging must be
+// idempotent: match against the tail of the same role, replace when it is the
+// same logical message, append otherwise.
+function liveMessageText(m: AgentMessage): string {
+  if (m.role === "user") {
+    const content = (m as UserMessage).content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) return content.map((b) => (b as TextContent).text ?? "").join("");
+    return "";
+  }
+  if (m.role === "assistant") {
+    const content = (m as AssistantMessage).content;
+    if (!Array.isArray(content)) return "";
+    // Text blocks only: thinking grows between text deltas and would break
+    // naive prefix matching on the concatenation. Two assistant messages with
+    // identical text are treated as the same logical message, which is the
+    // behavior we want for streaming updates.
+    return content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as TextContent).text ?? "")
+      .join("");
+  }
+  return "";
+}
+
+function sameLiveMessage(a: AgentMessage, b: AgentMessage): boolean {
+  if (a.role !== b.role) return false;
+  if (a.role === "assistant" || a.role === "user") {
+    const at = liveMessageText(a);
+    const bt = liveMessageText(b);
+    return at === bt || at.startsWith(bt) || bt.startsWith(at);
+  }
+  if (a.role === "toolResult") return (a as ToolResultMessage).toolCallId === (b as ToolResultMessage).toolCallId;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function mergeObservedMessages(prev: AgentMessage[], overlay: AgentMessage[]): AgentMessage[] {
+  const messages = [...prev];
+  for (const msg of overlay) {
+    let idx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === msg.role) { idx = i; break; }
+    }
+    if (idx === -1) { messages.push(msg); continue; }
+    if (sameLiveMessage(messages[idx], msg)) {
+      // Same logical message — keep the newest version.
+      if (JSON.stringify(messages[idx]) !== JSON.stringify(msg)) messages[idx] = msg;
+    } else {
+      messages.push(msg);
+    }
+  }
+  return messages;
+}
+
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type NoticeType = "info" | "success" | "warning" | "error";
@@ -162,6 +222,12 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
+// Observed (terminal) sessions poll faster: mobile networks often buffer the
+// SSE stream, so the short-request poll doubles as the primary sync path there.
+const OBSERVED_STATE_RECONCILE_MS = 5_000;
+// Treat SSE as stalled after this gap; only then may the poll snapshot
+// overwrite the streaming bubble (never roll it back).
+const SSE_STALL_MS = 3_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const MAX_NOTICES = 5;
@@ -338,6 +404,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
+  // Monotonic timestamp of the last SSE event; poll fallback only overwrites
+  // the streaming bubble when the stream has been quiet for a while.
+  const lastEventAtRef = useRef(0);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
@@ -831,12 +900,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
       if (!res.ok) return;
-      const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
+      const data = await res.json() as { running?: boolean; liveMessages?: AgentMessage[] | null; state?: AgentStateResponse };
       // A slow response can straddle a run boundary (previous run finished
       // and the user already started the next one while this request was in
       // flight) — everything in it is stale, drop it.
       if (promptRunIdRef.current !== runId) return;
       const state = data.state;
+      // Observed sessions: the SSE stream is the primary sync path, but mobile
+      // networks buffer it heavily. The poll response carries the terminal's
+      // live message snapshot, so merge it here as a fast fallback — a short
+      // GET is never buffered the way a long-lived stream is.
+      const live = data.liveMessages;
+      if (Array.isArray(live) && live.length) {
+        const overlay = live.map(normalizeToolCalls);
+        const complete = overlay.slice(0, -1);
+        if (complete.length) setMessages((prev) => mergeObservedMessages(prev, complete));
+        const partial = overlay.at(-1);
+        // Only overwrite the streaming bubble when SSE looks stalled, so a
+        // healthy stream is never rolled back to an older snapshot.
+        if (partial && Date.now() - lastEventAtRef.current > SSE_STALL_MS) {
+          dispatch({ type: "update", message: partial });
+          setAgentPhase(null);
+        }
+      }
       // Mirror compaction state unconditionally: a missed compaction_end
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
@@ -871,11 +957,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const onVisible = () => {
       if (document.visibilityState === "visible") reconcile();
     };
-    const interval = setInterval(reconcile, AGENT_STATE_RECONCILE_MS);
+    // Observed sessions poll faster: the poll is their mobile-network-safe
+    // sync path, so its cadence directly bounds how stale the view can get.
+    // Recursive timeout (not setInterval) so the cadence adapts once the
+    // observed presence is discovered on the SSE connection.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = () => {
+      reconcile();
+      timer = setTimeout(tick, observedRef.current ? OBSERVED_STATE_RECONCILE_MS : AGENT_STATE_RECONCILE_MS);
+    };
+    timer = setTimeout(tick, observedRef.current ? OBSERVED_STATE_RECONCILE_MS : AGENT_STATE_RECONCILE_MS);
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", reconcile);
     return () => {
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", reconcile);
     };
@@ -886,6 +981,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [agentRunning]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    lastEventAtRef.current = Date.now();
     switch (event.type) {
       case "live_snapshot": {
         const snapshot = event.snapshot as { generation?: number; runId?: number; baseLeafId?: string | null; leafId?: string | null; busy?: boolean; messages?: AgentMessage[] } | undefined;
@@ -898,7 +994,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const overlay = snapshot.messages ?? [];
           const complete = overlay.slice(0, -1).map(normalizeToolCalls);
           const partial = overlay.at(-1);
-          if (complete.length) setMessages((prev) => [...prev, ...complete]);
+          if (complete.length) setMessages((prev) => mergeObservedMessages(prev, complete));
           if (partial) dispatch({ type: "update", message: normalizeToolCalls(partial) });
           else if (!snapshot.busy) dispatch({ type: "reset" });
           agentRunningRef.current = !!snapshot.busy;
