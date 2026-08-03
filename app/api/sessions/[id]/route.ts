@@ -24,6 +24,35 @@ async function rejectObservedWrite(id: string): Promise<NextResponse | null> {
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
 
+// GET /api/sessions/[id] 响应缓存：同一文件在 mtime/size 不变时直接复用构建好的
+// context/tree，避免每次切换会话都重新解析 .jsonl（长会话文件可达数 MB）。
+// ponytail: 简单上限，超了整体清空；键含 leafId 与 defer 参数，分支切换不串味。
+type CachedSessionPayload = { mtimeMs: number; size: number; payload: unknown };
+const sessionPayloadCache = new Map<string, CachedSessionPayload>();
+const SESSION_PAYLOAD_CACHE_MAX = 200;
+
+function readSessionPayloadCached(
+  key: string,
+  filePath: string,
+  build: () => unknown | Promise<unknown>,
+): Promise<unknown> {
+  let stats;
+  try {
+    stats = statSync(filePath);
+  } catch {
+    return Promise.resolve(build());
+  }
+  const cached = sessionPayloadCache.get(key);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return Promise.resolve(cached.payload);
+  }
+  return Promise.resolve(build()).then((payload) => {
+    if (sessionPayloadCache.size >= SESSION_PAYLOAD_CACHE_MAX) sessionPayloadCache.clear();
+    sessionPayloadCache.set(key, { mtimeMs: stats.mtimeMs, size: stats.size, payload });
+    return payload;
+  });
+}
+
 /**
  * Project the session tree into the shallow navigation tree sent to the client.
  * Keeps roots, branch points, and leaves while contracting single-child chains
@@ -132,47 +161,55 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const sm = SessionManager.open(filePath);
-    const entries = sm.getEntries() as never;
-    const leafId = sm.getLeafId();
-    const tree = projectTreeForResponse(sm.getTree());
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
 
-    const header = sm.getHeader();
-    let modified = header?.timestamp ?? new Date().toISOString();
-    try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
-    const parentSessionId = header?.parentSession
-      ? await resolveSessionIdByPath(header.parentSession)
-      : undefined;
-    const info = header ? {
-      path: filePath,
-      id: header.id,
-      cwd: header.cwd ?? "",
-      name: sm.getSessionName(),
-      created: header.timestamp,
-      modified,
-      messageCount: context.messages.length,
-      firstMessage: context.messages.find((m) => m.role === "user")
-        ? (() => {
-            const msg = context.messages.find((m) => m.role === "user")!;
-            const c = (msg as { content: unknown }).content;
-            return typeof c === "string" ? c : (Array.isArray(c) ? (c.find((b: { type: string }) => b.type === "text") as { text: string } | undefined)?.text ?? "" : "") || "(no messages)";
-          })()
-        : "(no messages)",
-      parentSessionId,
-    } : null;
+    // 缓存键含文件路径，但 leafId 需先打开文件才能拿到；为了在缓存命中时
+    // 完全跳过 .jsonl 解析，用不带 leafId 的键查一次：命中说明文件未变，
+    // leafId 也随之不变（leafId 由文件内容决定）。
+    const key = `${filePath}:${deferThinking ? 1 : 0}:${deferToolResultImages ? 1 : 0}`;
+    const payload = await readSessionPayloadCached(key, filePath, async () => {
+      const sm = SessionManager.open(filePath);
+      const entries = sm.getEntries() as never;
+      const leafId = sm.getLeafId();
+      const tree = projectTreeForResponse(sm.getTree());
+      const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
 
-    return NextResponse.json({
-      sessionId: id,
-      filePath,
-      info,
-      leafId,
-      tree,
-      context,
+      const header = sm.getHeader();
+      let modified = header?.timestamp ?? new Date().toISOString();
+      try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
+      const parentSessionId = header?.parentSession
+        ? await resolveSessionIdByPath(header.parentSession)
+        : undefined;
+      const info = header ? {
+        path: filePath,
+        id: header.id,
+        cwd: header.cwd ?? "",
+        name: sm.getSessionName(),
+        created: header.timestamp,
+        modified,
+        messageCount: context.messages.length,
+        firstMessage: context.messages.find((m) => m.role === "user")
+          ? (() => {
+              const msg = context.messages.find((m) => m.role === "user")!;
+              const c = (msg as { content: unknown }).content;
+              return typeof c === "string" ? c : (Array.isArray(c) ? (c.find((b: { type: string }) => b.type === "text") as { text: string } | undefined)?.text ?? "" : "") || "(no messages)";
+            })()
+          : "(no messages)",
+        parentSessionId,
+      } : null;
+
+      return {
+        sessionId: id,
+        filePath,
+        info,
+        leafId,
+        tree,
+        context,
+      };
     });
+    return NextResponse.json(payload);
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

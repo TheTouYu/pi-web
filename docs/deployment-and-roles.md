@@ -89,3 +89,38 @@ systemctl --user start pi-web
 - 短连接 GET 不会被代理缓冲，所以轮询成了移动端的实际同步主路径；SSE 正常时轮询只是无害兜底
 
 **局限**：轮询最多 5 秒一跳，看逐字输出仍不如终端流畅；要根治需换 WebSocket（改动大，暂未做）。
+
+## 五、会话切换卡顿排查与优化（2026-08）
+
+**现象**：网页端切换会话要等 4~5 秒才显示聊天记录。
+
+### 排查结论（用数据定位）
+
+切换链路是 `AppShell.handleSelectSession → ChatWindow 重挂 → loadSession → GET /api/sessions/[id] → lib/session-reader.ts 读 .jsonl`。用 curl + headless Chrome 实测：
+
+- **API 层不是瓶颈**：最大的会话（397 条 UI 消息、58 万字符、866KB JSON）`GET /api/sessions/[id]` 只要 50~170ms；`GET /state` 12~19ms。
+- **瓶颈在浏览器端渲染**：整页加载该会话时主线程 longtask 合计 **1553ms**；其中**代码块高亮是大头**——大会话有 220 个代码块，每个都用 `react-syntax-highlighter`（Prism）渲染，还开了 `showLineNumbers`。微基准：220 个小代码块 `SyntaxHighlighter`+行号 **760ms**、无行号 421ms、纯 `<pre>` 仅 2ms。
+
+### 优化点（已上线）
+
+1. **代码块高亮轻量化**（`components/MermaidBlock.tsx` + 新增 `lib/syntax-highlight.ts` + `app/globals.css`）：
+   - 弃用 `react-syntax-highlighter`（它加载 `refractor/all` 全语言集 + 每 token 建 React 元素 + 行号 DOM，inline style 使 HTML 膨胀到 663KB/220 块）
+   - 直接用底层 `refractor` 高亮，手写 hast→HTML（~20 行），`dangerouslySetInnerHTML` 渲染，React 每块只建 1 个元素
+   - 高亮结果按 `lang+code` 缓存（上限 1000 条，超了整体清空）——来回切换同一会话时零重算
+   - token 颜色改为 CSS class（亮/暗两套，跟随 `html.dark`），不再用 inline style；**行号去掉**（其成本占原渲染近一半）
+2. **`GET /api/sessions/[id]` 响应缓存**（`app/api/sessions/[id]/route.ts`）：按 `文件路径+defer 参数` 键控、`mtime+size` 校验，命中时完全跳过 .jsonl 解析与构建（含 tree 投影、context 转换、JSON 序列化）。实测 50~170ms → **8ms**。上限 200 条整体清空。注意：缓存命中依赖文件 mtime/size 不变，agent 写会话文件后自动失效。
+
+### 复测数据（headless Chrome longtask 合计）
+
+| 场景 | 优化前 | 优化后 |
+|---|---|---|
+| 整页加载 397 消息大会话 | 1553ms | 814~930ms |
+| 点击切换（内容首现） | 689ms | 182ms |
+| 点击切换（内容稳定） | 2.2s | 1.44s |
+| 大会话 API 读取 | 50~170ms | 8ms（缓存命中） |
+
+### 遗留项
+
+- 剩余渲染时间主要花在 react-markdown 解析（58 万字符）+ 页面水合，暂未动；若后续仍嫌慢，方向是可见窗口调小（`VISIBLE_PAGE_SIZE`）或代码块懒高亮（IntersectionObserver）。
+- 若用户在意行号，可在 `lib/syntax-highlight.ts` 里用 CSS `counter` 给行号（成本远低于现方案）。
+- `components/FileViewer.tsx` 仍用 `react-syntax-highlighter`（一次只渲染一个文件，不是切换会话热点），保持不动。

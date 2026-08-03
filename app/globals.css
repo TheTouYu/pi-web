@@ -411,6 +411,123 @@ pre, code {
   color: var(--text);
 }
 
+/* 轻量代码高亮（lib/syntax-highlight.ts 输出 Prism token class） */
+.markdown-code-pre {
+  margin: 0;
+  padding: 11px 13px;
+  font-size: 12.5px;
+  line-height: 1.62;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--bg) 92%, var(--bg-panel));
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.markdown-code-pre code {
+  font-family: inherit;
+  background: transparent;
+}
+.markdown-code-pre .token.comment,
+.markdown-code-pre .token.prolog,
+.markdown-code-pre .token.doctype,
+.markdown-code-pre .token.cdata {
+  color: #008000;
+}
+.markdown-code-pre .token.punctuation {
+  color: #000;
+}
+.markdown-code-pre .token.keyword,
+.markdown-code-pre .token.boolean,
+.markdown-code-pre .token.constant,
+.markdown-code-pre .token.symbol {
+  color: #0000ff;
+}
+.markdown-code-pre .token.string,
+.markdown-code-pre .token.char,
+.markdown-code-pre .token.attr-value {
+  color: #a31515;
+}
+.markdown-code-pre .token.number,
+.markdown-code-pre .token.unit {
+  color: #098658;
+}
+.markdown-code-pre .token.function,
+.markdown-code-pre .token.function-variable {
+  color: #795e26;
+}
+.markdown-code-pre .token.class-name,
+.markdown-code-pre .token.maybe-class-name {
+  color: #267f99;
+}
+.markdown-code-pre .token.operator,
+.markdown-code-pre .token.entity {
+  color: #000;
+}
+.markdown-code-pre .token.tag,
+.markdown-code-pre .token.selector {
+  color: #800000;
+}
+.markdown-code-pre .token.attr-name,
+.markdown-code-pre .token.property,
+.markdown-code-pre .token.builtin {
+  color: #e00000;
+}
+.markdown-code-pre .token.regex,
+.markdown-code-pre .token.important,
+.markdown-code-pre .token.variable {
+  color: #ee0000;
+}
+html.dark .markdown-code-pre {
+  color: #d4d4d4;
+}
+html.dark .markdown-code-pre .token.comment,
+html.dark .markdown-code-pre .token.prolog,
+html.dark .markdown-code-pre .token.doctype,
+html.dark .markdown-code-pre .token.cdata {
+  color: #6a9955;
+}
+html.dark .markdown-code-pre .token.punctuation,
+html.dark .markdown-code-pre .token.operator,
+html.dark .markdown-code-pre .token.entity {
+  color: #d4d4d4;
+}
+html.dark .markdown-code-pre .token.keyword,
+html.dark .markdown-code-pre .token.boolean,
+html.dark .markdown-code-pre .token.constant,
+html.dark .markdown-code-pre .token.symbol {
+  color: #569cd6;
+}
+html.dark .markdown-code-pre .token.string,
+html.dark .markdown-code-pre .token.char,
+html.dark .markdown-code-pre .token.attr-value {
+  color: #ce9178;
+}
+html.dark .markdown-code-pre .token.number,
+html.dark .markdown-code-pre .token.unit {
+  color: #b5cea8;
+}
+html.dark .markdown-code-pre .token.function,
+html.dark .markdown-code-pre .token.function-variable {
+  color: #dcdcaa;
+}
+html.dark .markdown-code-pre .token.class-name,
+html.dark .markdown-code-pre .token.maybe-class-name {
+  color: #4ec9b0;
+}
+html.dark .markdown-code-pre .token.tag,
+html.dark .markdown-code-pre .token.selector {
+  color: #c586c0;
+}
+html.dark .markdown-code-pre .token.attr-name,
+html.dark .markdown-code-pre .token.property,
+html.dark .markdown-code-pre .token.builtin {
+  color: #9cdcfe;
+}
+html.dark .markdown-code-pre .token.regex,
+html.dark .markdown-code-pre .token.important,
+html.dark .markdown-code-pre .token.variable {
+  color: #d16969;
+}
+
 .mermaid-block {
   padding: 12px;
   overflow-x: auto;
