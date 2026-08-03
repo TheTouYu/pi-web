@@ -52,6 +52,13 @@ export function AppShell() {
   const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
+
+  // 多会话实例保留：切换会话时保留最近几个 ChatWindow 实例（DOM/状态不卸载），
+  // 切回时零重渲染；超出上限按 LRU 卸载最久未访问的实例。
+  const CHAT_INSTANCE_MAX = 3;
+  type ChatInstance = { session: SessionInfo; key: number; order: number };
+  const [chatInstances, setChatInstances] = useState<Map<string, ChatInstance>>(new Map());
+  const chatInstanceOrderRef = useRef(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
@@ -263,6 +270,8 @@ export function AppShell() {
       return prev;
     });
     setSessionKey((k) => k + 1);
+    // 跨项目：保留的会话实例全部卸载（项目相关的 SSE/文件访问不再有意义）
+    setChatInstances(new Map());
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
@@ -281,7 +290,24 @@ export function AppShell() {
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
     setNewSessionCwd(null);
     setSelectedSession(session);
-    setSessionKey((k) => k + 1);
+    setChatInstances((prev) => {
+      const next = new Map(prev);
+      const order = ++chatInstanceOrderRef.current;
+      const existing = next.get(session.id);
+      if (existing) {
+        next.set(session.id, { ...existing, session, order });
+      } else {
+        next.set(session.id, { session, key: order, order });
+      }
+      // LRU：只保留最近访问的 CHAT_INSTANCE_MAX 个实例
+      if (next.size > CHAT_INSTANCE_MAX) {
+        const sorted = [...next.entries()].sort((a, b) => b[1].order - a[1].order);
+        for (let i = sorted.length - 1; i >= CHAT_INSTANCE_MAX; i--) {
+          next.delete(sorted[i][0]);
+        }
+      }
+      return next;
+    });
     setSystemPrompt(null);
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
@@ -542,6 +568,8 @@ export function AppShell() {
       setProjectTrustDialogOpen(false);
       setModelsRefreshKey((key) => key + 1);
       setSessionKey((key) => key + 1);
+      // 实例模式下 sessionKey 只影响 fallback，这里清空保留实例强制重挂
+      setChatInstances(new Map());
     } catch (error) {
       setProjectTrustError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1426,22 +1454,49 @@ export function AppShell() {
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {showChat ? (
-            <ChatWindow
-              key={sessionKey}
-              session={selectedSession}
-              newSessionCwd={effectiveNewSessionCwd}
-              onAgentEnd={handleAgentEnd}
-              onSessionCreated={canWrite ? handleSessionCreated : undefined}
-              onSessionForked={canWrite ? handleSessionForked : undefined}
-              modelsRefreshKey={modelsRefreshKey}
-              chatInputRef={chatInputRef}
-              onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSessionStatsChange={handleSessionStatsChange}
-              onSessionStatsPanelOpen={openSessionStatsPanel}
-              onContextUsageChange={handleContextUsageChange}
-              onOpenFile={handleOpenLinkedFile}
-            />
+            <div style={{ display: "contents" }}>
+              {[...chatInstances.values()].map(({ session: instanceSession, key }) => {
+                const isActive = selectedSession?.id === instanceSession.id;
+                return (
+                  <div key={key} style={{ display: isActive ? "contents" : "none" }}>
+                    <ChatWindow
+                      session={isActive && selectedSession ? selectedSession : instanceSession}
+                      active={isActive}
+                      newSessionCwd={null}
+                      onAgentEnd={handleAgentEnd}
+                      onSessionCreated={canWrite ? handleSessionCreated : undefined}
+                      onSessionForked={canWrite ? handleSessionForked : undefined}
+                      modelsRefreshKey={modelsRefreshKey}
+                      chatInputRef={chatInputRef}
+                      onBranchDataChange={handleBranchDataChange}
+                      onSystemPromptChange={handleSystemPromptChange}
+                      onSessionStatsChange={handleSessionStatsChange}
+                      onSessionStatsPanelOpen={openSessionStatsPanel}
+                      onContextUsageChange={handleContextUsageChange}
+                      onOpenFile={handleOpenLinkedFile}
+                    />
+                  </div>
+                );
+              })}
+              {(!selectedSession || !chatInstances.has(selectedSession.id)) && (
+                <ChatWindow
+                  key={sessionKey}
+                  session={selectedSession}
+                  newSessionCwd={effectiveNewSessionCwd}
+                  onAgentEnd={handleAgentEnd}
+                  onSessionCreated={canWrite ? handleSessionCreated : undefined}
+                  onSessionForked={canWrite ? handleSessionForked : undefined}
+                  modelsRefreshKey={modelsRefreshKey}
+                  chatInputRef={chatInputRef}
+                  onBranchDataChange={handleBranchDataChange}
+                  onSystemPromptChange={handleSystemPromptChange}
+                  onSessionStatsChange={handleSessionStatsChange}
+                  onSessionStatsPanelOpen={openSessionStatsPanel}
+                  onContextUsageChange={handleContextUsageChange}
+                  onOpenFile={handleOpenLinkedFile}
+                />
+              )}
+            </div>
           ) : initialCwdStatus === "validating" ? (
             <div
               role="status"
@@ -1573,7 +1628,11 @@ export function AppShell() {
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         onClose={() => setPluginsConfigOpen(false)}
-        onReloaded={() => setSessionKey((k) => k + 1)}
+        onReloaded={() => {
+          setSessionKey((k) => k + 1);
+          // 实例模式下 sessionKey 只影响 fallback，清空保留实例强制重挂
+          setChatInstances(new Map());
+        }}
       />
     )}
     </>

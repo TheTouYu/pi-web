@@ -201,6 +201,8 @@ export type BuiltinSlashCommandResult =
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
+  /** 多会话实例保留时，非活跃实例不连 SSE/不轮询，但保留 DOM 与状态 */
+  active?: boolean;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
@@ -393,6 +395,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
+    active = true,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -407,6 +410,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Monotonic timestamp of the last SSE event; poll fallback only overwrites
   // the streaming bubble when the stream has been quiet for a while.
   const lastEventAtRef = useRef(0);
+  // 已加载会话数据的指纹（leafId+消息指纹），用于切回会话时跳过未变化的 setState
+  const sessionFingerprintRef = useRef<string | null>(null);
+  // 首次加载完成标记：切回已有数据的会话时不显示 loading（否则 spinner 会卸载消息 DOM）
+  const sessionLoadedRef = useRef(false);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
@@ -525,10 +532,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
-      setData(d);
-      setActiveLeafId(d.leafId);
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
+      // 多实例保留：同一会话数据未变（entryIds+leafId 指纹一致）时不 setState，
+      // 保留现有渲染（memo 全部命中），切回会话即零重渲染。
+      const fingerprint = `${d.leafId}|${d.context.messages.length}|${(d.context.entryIds ?? []).join(",")}`;
+      if (sessionFingerprintRef.current !== fingerprint) {
+        sessionFingerprintRef.current = fingerprint;
+        setData(d);
+        setActiveLeafId(d.leafId);
+        setMessages(d.context.messages);
+        setEntryIds(d.context.entryIds ?? []);
+      }
       setCurrentModelOverride(null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -947,7 +960,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // against the server periodically and whenever the tab returns to the
   // foreground or the network comes back.
   useEffect(() => {
-    if (!agentRunning) return;
+    if (!agentRunning || !active) return;
     const reconcile = () => {
       // Read the ref on every tick: for brand-new sessions the id is
       // assigned only after ensure_session returns.
@@ -974,7 +987,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", reconcile);
     };
-  }, [agentRunning, reconcileAgentState]);
+  }, [agentRunning, active, reconcileAgentState]);
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;
@@ -1621,11 +1634,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }, AUTO_SCROLL_RESUME_MS);
   }, [scrollToBottom]);
 
-  // Load session on mount
+  // Load session on mount / when this instance becomes active again.
+  // 多实例保留：active 变 false 时断开 SSE（cleanup），变回 true 时重新加载并恢复。
+  // 加载结果与现有渲染指纹一致时跳过 setState，切回即零重渲染。
   useEffect(() => {
-    if (session) {
-      sessionIdRef.current = session.id;
-      loadSession(session.id, true, true).then((agentState) => {
+    if (!active || !session) return;
+    sessionIdRef.current = session.id;
+    loadSession(session.id, !sessionLoadedRef.current, true).then((agentState) => {
         if (agentState?.runtime === "observed") {
           // Observed terminal runs can start after this page loads, so keep a
           // live subscription even while the terminal is currently idle.
@@ -1649,7 +1664,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             void waitForBashSettlement(session.id);
           }
         }
-        if (agentState?.state) {
+        // 加载完成（无论指纹是否相同）：之后切回不再闪 loading
+      sessionLoadedRef.current = true;
+      if (agentState?.state) {
           if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
           if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
           if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
@@ -1659,7 +1676,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
         }
       });
-    }
     return () => {
       bashRecoveryIdRef.current += 1;
       eventSourceRef.current?.close();
@@ -1668,7 +1684,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (streamScrollFrameRef.current !== null) cancelAnimationFrame(streamScrollFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active, session?.id]);
 
   useEffect(() => {
     onSystemPromptChange?.(systemPrompt);

@@ -1,4 +1,6 @@
 export const VISIBLE_PAGE_SIZE = 50;
+// 首屏只渲染最近一小部分（打开大会话时更快），向上滚动再增量加载。
+export const INITIAL_VISIBLE_COUNT = 20;
 
 export function getVisibleRenderWindow(totalCount: number, visibleCount: number): {
   startIndex: number;

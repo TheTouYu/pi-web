@@ -119,6 +119,19 @@ systemctl --user start pi-web
 | 点击切换（内容稳定） | 2.2s | 1.44s |
 | 大会话 API 读取 | 50~170ms | 8ms（缓存命中） |
 
+### 第二轮优化：会话实例保留 + 首屏增量渲染（2026-08）
+
+两个体验优化：**切回已看过的会话不再重新渲染**、**首次打开先渲染最近一小部分，上滚增量加载**。
+
+1. **多会话实例保留**（`components/AppShell.tsx`）：切换会话不再 `sessionKey+1` 重挂 ChatWindow，改为保留最近 3 个会话实例（LRU，超出卸载最久未访问的），非活跃实例 `display:none` 但 DOM/状态不卸载——切回时原样显示（消息 DOM 节点是同一批，滚动位置、折叠状态都在）。
+   - `ChatWindow`/`useAgentSession` 新增 `active` prop：非活跃实例断开 SSE、停 reconcile 轮询；恢复活跃时重新 `loadSession` + 按需重连。
+   - **指纹跳过重渲染**（`hooks/useAgentSession.ts`）：`loadSession` 用 `leafId + 消息数 + entryIds` 做指纹，与已渲染数据一致时跳过全部 setState（memo 全命中，零重渲染）；数据变了才更新。
+   - 切回时**不闪 loading**：已有数据时 `showLoading=false`（否则 spinner 会卸载消息 DOM 强制重渲染）。
+   - 跨项目切换（handleCwdChange）、项目信任通过、插件重载时清空保留实例（这些场景需要干净重挂）。新会话（New）与 fork 仍走 fallback 单实例路径（key=sessionKey），不受影响。
+2. **首屏增量渲染**（`lib/chat-lazy-load.ts`）：初始可见窗口从 50 条降到 **20 条**（`INITIAL_VISIBLE_COUNT`），向上滚动到顶触发 sentinel 每次再加载 50 条（原有机制）。首屏 longtask 从 ~800ms 降到 ~590ms（含页面水合）。
+
+**实测**：切回已加载会话 = 0 重渲染（longtask 仅 ~50ms，消息 DOM 节点引用不变）；首屏 20 条渲染后上滚增量加载正常（代码块 52 → 136）。
+
 ### 遗留项
 
 - 剩余渲染时间主要花在 react-markdown 解析（58 万字符）+ 页面水合，暂未动；若后续仍嫌慢，方向是可见窗口调小（`VISIBLE_PAGE_SIZE`）或代码块懒高亮（IntersectionObserver）。
